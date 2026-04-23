@@ -1,0 +1,118 @@
+{
+  "name": "open-code-vscode-extension",
+  "displayName": "Open Code",
+  "description": "Memory-native agent: local Gemma, two-layer memory, Autodrive, mindset critics",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/open-code/Open-Code"
+  },
+  "publisher": "open-code",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onCommand:open-code.startAutodrive",
+    "onCommand:open-code.runAgent",
+    "onCommand:open-code.clearMemory"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "themes": [
+      {
+        "label": "Open Code Dark",
+        "uiTheme": "vs-dark",
+        "path": "./themes/open-code-color-theme.json"
+      }
+    ],
+    "configuration": {
+      "title": "Open Code",
+      "properties": {
+        "openCode.gemmaBaseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11434",
+          "description": "Base URL for the local open model (Ollama-compatible or stub). Default Gemma profile uses localhost; pin model ID in the runtime, not in secrets."
+        },
+        "openCode.mindset.qa": {
+          "type": "boolean",
+          "default": true
+        },
+        "openCode.mindset.test": {
+          "type": "boolean",
+          "default": true
+        },
+        "openCode.mindset.scalability": {
+          "type": "boolean",
+          "default": true
+        },
+        "openCode.mindset.faultTolerance": {
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "open-code.startAutodrive",
+        "title": "Open Code: Start Autodrive (agent chat)"
+      },
+      {
+        "command": "open-code.runAgent",
+        "title": "Open Code: Run agent on open editor"
+      },
+      {
+        "command": "open-code.reviewProposed",
+        "title": "Open Code: Review last proposed change"
+      },
+      {
+        "command": "open-code.clearMemory",
+        "title": "Open Code: Clear project memory (raw + semantic)"
+      },
+      {
+        "command": "open-code.showMemory",
+        "title": "Open Code: Show recent memory (Output)"
+      },
+      {
+        "command": "open-code.discriminateCommit",
+        "title": "Open Code: Run discriminator on commit message (active editor)"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "open-code.startAutodrive"
+        },
+        {
+          "command": "open-code.runAgent"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "open-code.runAgent",
+          "group": "navigation@9",
+          "when": "editorTextFocus"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -p . -w",
+    "check": "tsc -p . --noEmit",
+    "test": "node -e \"console.log('Extension e2e: use @vscode/test-electron when adding tests'); process.exit(0)\"",
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.0.0",
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "1.85.0",
+    "@vscode/test-electron": "^2.3.0",
+    "mocha": "^10.0.0",
+    "typescript": "^5.3.0"
+  }
+}

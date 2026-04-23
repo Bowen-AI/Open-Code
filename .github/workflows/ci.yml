@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, develop, "open-code/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.85
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Fmt
+        run: cargo fmt -p open-code-memory -- --check
+
+      - name: Clippy
+        run: cargo clippy -p open-code-memory -- -D warnings
+
+      - name: Test Rust
+        run: cargo test -p open-code-memory
+
+      - name: Build Rust
+        run: cargo build -p open-code-memory --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: npm install
+        run: npm install
+
+      - name: Typecheck extension
+        run: npm run -w open-code-vscode-extension check
+
+      - name: Test workspace
+        run: npm test
+

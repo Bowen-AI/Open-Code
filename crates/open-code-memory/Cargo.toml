@@ -1,0 +1,27 @@
+[package]
+name = "open-code-memory"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Open Code memory service: raw + semantic layers on SQLite (localhost HTTP)"
+
+[dependencies]
+axum = { version = "0.7.9", features = ["json"] }
+rusqlite = { version = "0.32.1", features = ["bundled"] }
+serde = { version = "1.0.217", features = ["derive"] }
+serde_json = "1.0.135"
+tokio = { version = "1.43.0", features = ["full"] }
+tower-http = { version = "0.6.2", features = ["cors", "trace"] }
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
+uuid = { version = "1.12.1", features = ["v4", "serde"] }
+chrono = { version = "0.4.39", features = ["serde"] }
+sha2 = "0.10.8"
+
+[lib]
+name = "open_code_memory"
+path = "src/lib.rs"
+
+[[bin]]
+name = "open-code-memoryd"
+path = "src/main.rs"

@@ -1,0 +1,21 @@
+{
+  "name": "open-code-workspace",
+  "private": true,
+  "workspaces": [
+    "packages/extension"
+  ],
+  "scripts": {
+    "build": "npm run build:ext && node scripts/try-cargo.mjs",
+    "build:rust:required": "cargo build -p open-code-memory --release",
+    "build:ext": "npm run -w open-code-vscode-extension compile",
+    "watch": "npm run -w open-code-vscode-extension watch",
+    "test": "npm run -w open-code-vscode-extension test && node scripts/try-cargo-test.mjs",
+    "test:rust:required": "cargo test -p open-code-memory",
+    "lint": "npm run -w open-code-vscode-extension check",
+    "memoryd": "cargo run -p open-code-memory --bin open-code-memoryd --",
+    "package": "npm run -w open-code-vscode-extension package"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

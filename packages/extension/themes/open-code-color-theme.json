@@ -1,0 +1,20 @@
+{
+  "name": "Open Code Dark",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#0d1117",
+    "editor.foreground": "#e6edf3",
+    "sideBar.background": "#010409",
+    "activityBar.background": "#010409",
+    "statusBar.background": "#161b22",
+    "titleBar.activeBackground": "#0d1117",
+    "editorLineNumber.foreground": "#6e7681",
+    "editorLineNumber.activeForeground": "#e6edf3"
+  },
+  "tokenColors": [
+    {
+      "scope": ["comment", "punctuation.definition.comment"],
+      "settings": { "foreground": "#8b949e", "fontStyle": "italic" }
+    }
+  ]
+}
