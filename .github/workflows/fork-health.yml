@@ -1,0 +1,22 @@
+name: Fork Health
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "docs/FORK_AND_RELEASE.md"
+      - "scripts/verify-fork.sh"
+      - ".github/workflows/fork-health.yml"
+
+jobs:
+  verify-fork-wiring:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify fork wiring
+        run: |
+          chmod +x scripts/verify-fork.sh
+          scripts/verify-fork.sh
