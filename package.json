@@ -1,0 +1,167 @@
+{
+  "name": "open-cursor",
+  "displayName": "Open-Cursor",
+  "description": "Open-source Cursor-like AI code editor with persistent agent memory and open-weights model support",
+  "version": "0.1.0",
+  "publisher": "bowen-ai",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "memory",
+    "cursor",
+    "llm",
+    "open-weights",
+    "ollama",
+    "copilot"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Bowen-AI/Open-Cursor.git"
+  },
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Open-Cursor",
+      "properties": {
+        "openCursor.model.provider": {
+          "type": "string",
+          "enum": [
+            "openweights",
+            "api"
+          ],
+          "default": "openweights",
+          "description": "Which AI provider to use: 'openweights' for a local Ollama model, 'api' for any OpenAI-compatible REST API."
+        },
+        "openCursor.model.ollamaHost": {
+          "type": "string",
+          "default": "http://localhost:11434",
+          "description": "Base URL of the Ollama server (used when provider is 'openweights')."
+        },
+        "openCursor.model.ollamaModel": {
+          "type": "string",
+          "default": "codellama:13b",
+          "description": "Ollama model tag to use (e.g. 'codellama:13b', 'deepseek-coder:6.7b')."
+        },
+        "openCursor.model.apiBaseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "Base URL for the OpenAI-compatible API (used when provider is 'api')."
+        },
+        "openCursor.model.apiModel": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model name to pass to the API (used when provider is 'api')."
+        },
+        "openCursor.memory.repoEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Store agent memories in the current repository (.open-cursor/memory/)."
+        },
+        "openCursor.memory.hostEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Store agent memories in the host home directory (~/.open-cursor/memory/)."
+        },
+        "openCursor.memory.maxEntriesPerScope": {
+          "type": "number",
+          "default": 500,
+          "description": "Maximum number of memory entries to keep per memory scope before eviction."
+        },
+        "openCursor.preferences.codingStyle": {
+          "type": "string",
+          "enum": [
+            "minimalistic",
+            "verbose",
+            "balanced"
+          ],
+          "default": "minimalistic",
+          "description": "Preferred coding style heuristic injected into every agent prompt."
+        },
+        "openCursor.preferences.language": {
+          "type": "string",
+          "default": "TypeScript",
+          "description": "Primary programming language preference (used as a prompt hint)."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "openCursor.openAgentPanel",
+        "title": "Open Agent Panel",
+        "category": "Open-Cursor"
+      },
+      {
+        "command": "openCursor.openMemoryView",
+        "title": "Browse Memories",
+        "category": "Open-Cursor"
+      },
+      {
+        "command": "openCursor.manageCredentials",
+        "title": "Manage Credentials",
+        "category": "Open-Cursor"
+      },
+      {
+        "command": "openCursor.clearMemory",
+        "title": "Clear All Memories",
+        "category": "Open-Cursor"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "openCursorSidebar",
+          "title": "Open-Cursor",
+          "icon": "$(robot)"
+        }
+      ]
+    },
+    "views": {
+      "openCursorSidebar": [
+        {
+          "type": "webview",
+          "id": "openCursor.agentPanel",
+          "name": "Agent"
+        },
+        {
+          "type": "webview",
+          "id": "openCursor.memoryView",
+          "name": "Memory"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "node ./out/test/runTests.js",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.6",
+    "@types/node": "18.x",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.1",
+    "@typescript-eslint/parser": "^6.13.1",
+    "@vscode/test-electron": "^2.3.8",
+    "eslint": "^8.54.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.3.2"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2"
+  }
+}
