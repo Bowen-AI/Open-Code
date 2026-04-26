@@ -13,6 +13,13 @@ if (ver.error || ver.status !== 0) {
   );
   process.exit(0);
 }
+const logic = spawnSync(cargo, ["build", "-p", "open-code-logic"], {
+  cwd: root,
+  stdio: "inherit"
+});
+if (logic.status !== 0) {
+  process.exit(logic.status ?? 1);
+}
 const r = spawnSync(cargo, ["build", "-p", "open-code-memory", "--release"], {
   cwd: root,
   stdio: "inherit"

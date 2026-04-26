@@ -8,7 +8,11 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,16 +32,16 @@ jobs:
             ${{ runner.os }}-cargo-
 
       - name: Fmt
-        run: cargo fmt -p open-code-memory -- --check
+        run: cargo fmt -p open-code-memory -p open-code-logic -- --check
 
       - name: Clippy
-        run: cargo clippy -p open-code-memory -- -D warnings
+        run: cargo clippy -p open-code-memory -p open-code-logic -- -D warnings
 
       - name: Test Rust
-        run: cargo test -p open-code-memory
+        run: cargo test -p open-code-memory -p open-code-logic
 
       - name: Build Rust
-        run: cargo build -p open-code-memory --release
+        run: cargo build -p open-code-memory -p open-code-logic --release
 
       - uses: actions/setup-node@v4
         with:
@@ -47,9 +51,14 @@ jobs:
       - name: npm install
         run: npm install
 
+      - name: Bootstrap checks
+        run: npm run check:bootstrap
+
       - name: Typecheck extension
         run: npm run -w open-code-vscode-extension check
 
+      - name: Typecheck desktop
+        run: npm run -w open-code-desktop check
+
       - name: Test workspace
         run: npm test
-

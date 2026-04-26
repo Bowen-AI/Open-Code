@@ -2,16 +2,26 @@
   "name": "open-code-workspace",
   "private": true,
   "workspaces": [
-    "packages/extension"
+    "packages/extension",
+    "packages/desktop"
   ],
   "scripts": {
-    "build": "npm run build:ext && node scripts/try-cargo.mjs",
+    "build": "npm run build:ext && npm run build:desktop && node scripts/try-cargo.mjs",
     "build:rust:required": "cargo build -p open-code-memory --release",
+    "build:logic": "cargo build -p open-code-logic",
+    "build:desktop": "npm run -w open-code-desktop build",
     "build:ext": "npm run -w open-code-vscode-extension compile",
+    "dev:desktop": "npm run -w open-code-desktop tauri:dev",
+    "preview:desktop": "python3 -m http.server 4173 -d packages/desktop/preview",
     "watch": "npm run -w open-code-vscode-extension watch",
     "test": "npm run -w open-code-vscode-extension test && node scripts/try-cargo-test.mjs",
+    "test:desktop:preview": "node packages/desktop/preview/test/logic.test.mjs && node packages/desktop/preview/test/ui-contract.test.mjs",
+    "test:logic": "cargo test -p open-code-logic",
     "test:rust:required": "cargo test -p open-code-memory",
-    "lint": "npm run -w open-code-vscode-extension check",
+    "check:desktop": "npm run -w open-code-desktop check",
+    "lint": "npm run -w open-code-vscode-extension check && npm run check:desktop",
+    "check:bootstrap": "node scripts/check-bootstrap.mjs",
+    "install:mvp": "bash scripts/install-mvp-macos-linux.sh",
     "memoryd": "cargo run -p open-code-memory --bin open-code-memoryd --",
     "package": "npm run -w open-code-vscode-extension package"
   },

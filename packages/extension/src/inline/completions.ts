@@ -35,8 +35,7 @@ export function registerInlineCompletion(
                   "You complete the current line of code. Reply with a single line fragment only, no quotes."
               },
               { role: "user", content: `Complete: ${linePrefix}` }
-            ],
-            { model: "gemma2" }
+            ]
           );
           const oneLine = out.split("\n")[0] ?? out;
           const range = new vscode.Range(pos, pos);

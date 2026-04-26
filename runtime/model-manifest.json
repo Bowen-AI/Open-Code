@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "defaultModel": "gemma3:4b",
+  "models": [
+    {
+      "id": "gemma3:4b",
+      "family": "Gemma 3",
+      "size": "4B",
+      "runtime": "ollama",
+      "source": "ollama://gemma3:4b",
+      "verification": {
+        "mode": "runtime-managed",
+        "checksum": null,
+        "note": "The MVP uses Ollama's model store. Desktop releases must replace mutable tags with exact artifact URLs and checksums before shipping a bundled or managed runtime."
+      },
+      "licenseNotice": "Gemma terms and notices must be reviewed before public distribution. Do not commit model weights to this repository."
+    },
+    {
+      "id": "gemma3n:e4b",
+      "family": "Gemma 3n",
+      "size": "E4B",
+      "runtime": "ollama",
+      "source": "ollama://gemma3n:e4b",
+      "verification": {
+        "mode": "runtime-managed",
+        "checksum": null,
+        "note": "Efficient fallback for everyday devices through Ollama."
+      },
+      "licenseNotice": "Gemma terms and notices must be reviewed before public distribution. Do not commit model weights to this repository."
+    }
+  ]
+}

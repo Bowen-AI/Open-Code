@@ -83,8 +83,7 @@ export class Discriminator {
         [
           { role: "system", content: system },
           { role: "user", content: `${label} [${phase}]:\n${text.slice(0, 12_000)}` }
-        ],
-        { model: "gemma2" }
+        ]
       );
     } catch (e) {
       out = `LLM offline or error: ${(e as Error).message} — log only.`;
