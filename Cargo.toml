@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/open-code-memory"]
+members = ["crates/open-code-memory", "crates/open-code-logic"]
 
 [workspace.package]
 edition = "2021"

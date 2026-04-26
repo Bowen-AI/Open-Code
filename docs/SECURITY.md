@@ -4,6 +4,7 @@
 
 - **Never** store API keys, tokens, or passwords in the two-layer **memory** store (raw or semantic).
 - Use the OS keychain or equivalent (`credential_ref` metadata in project settings) for secret material.
+- The extension includes basic `Open Code: Store credential reference` and `Open Code: Delete credential reference` commands backed by VS Code SecretStorage. These commands store secret values outside the SQLite memory database.
 - The VS Code [SecretStorage API](https://code.visualstudio.com/api/references/vscode-api#SecretStorage) is the appropriate place for user-supplied API keys in an extension when you add remote providers.
 
 ## Memory

@@ -16,7 +16,7 @@ For a full branded Electron app, merge this extension into a **Code-OSS fork** a
 
 ## Model packaging
 
-Default open model: **Gemma** on **localhost** (Ollama-compatible or your bundled `llama.cpp` sidecar). **Pin** model IDs in your server manifest, not in extension secrets. First-run model download should be **only** from your updater, not a separate end-user Ollama install, when you ship a consumer build.
+Default open model: **Gemma 3 4B** on **localhost** (Ollama-compatible or your bundled `llama.cpp` sidecar). The extension default is `gemma3:4b` for the MVP bootstrap, and the current MVP manifest lives at [`runtime/model-manifest.json`](../runtime/model-manifest.json). **Pin** exact model artifacts and checksums in your server manifest before a consumer desktop release. First-run model download should be **only** from your updater, not a separate end-user Ollama install, when you ship a consumer build.
 
 ## Credentials
 

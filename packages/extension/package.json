@@ -18,6 +18,10 @@
     "onStartupFinished",
     "onCommand:open-code.startAutodrive",
     "onCommand:open-code.runAgent",
+    "onCommand:open-code.revertLastChange",
+    "onCommand:open-code.health",
+    "onCommand:open-code.setCredentialRef",
+    "onCommand:open-code.deleteCredentialRef",
     "onCommand:open-code.clearMemory"
   ],
   "main": "./out/extension.js",
@@ -36,6 +40,11 @@
           "type": "string",
           "default": "http://127.0.0.1:11434",
           "description": "Base URL for the local open model (Ollama-compatible or stub). Default Gemma profile uses localhost; pin model ID in the runtime, not in secrets."
+        },
+        "openCode.gemmaModel": {
+          "type": "string",
+          "default": "gemma3:4b",
+          "description": "Local Gemma model tag to use for chat, inline completions, edits, and critics. MVP default targets Gemma 3 4B via Ollama; release builds should pin exact model artifacts in their runtime manifest."
         },
         "openCode.mindset.qa": {
           "type": "boolean",
@@ -69,6 +78,22 @@
         "title": "Open Code: Review last proposed change"
       },
       {
+        "command": "open-code.revertLastChange",
+        "title": "Open Code: Revert latest applied change"
+      },
+      {
+        "command": "open-code.health",
+        "title": "Open Code: Health"
+      },
+      {
+        "command": "open-code.setCredentialRef",
+        "title": "Open Code: Store credential reference"
+      },
+      {
+        "command": "open-code.deleteCredentialRef",
+        "title": "Open Code: Delete credential reference"
+      },
+      {
         "command": "open-code.clearMemory",
         "title": "Open Code: Clear project memory (raw + semantic)"
       },
@@ -88,6 +113,18 @@
         },
         {
           "command": "open-code.runAgent"
+        },
+        {
+          "command": "open-code.revertLastChange"
+        },
+        {
+          "command": "open-code.health"
+        },
+        {
+          "command": "open-code.setCredentialRef"
+        },
+        {
+          "command": "open-code.deleteCredentialRef"
         }
       ],
       "editor/title": [
@@ -103,7 +140,7 @@
     "compile": "tsc -p .",
     "watch": "tsc -p . -w",
     "check": "tsc -p . --noEmit",
-    "test": "node -e \"console.log('Extension e2e: use @vscode/test-electron when adding tests'); process.exit(0)\"",
+    "test": "npm run compile && node ./test/runTest.mjs",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {

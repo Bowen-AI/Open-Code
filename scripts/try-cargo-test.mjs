@@ -11,5 +11,9 @@ if (ver.error || ver.status !== 0) {
   console.warn("[open-code] skip `cargo test` (no cargo in PATH)");
   process.exit(0);
 }
+const logic = spawnSync(cargo, ["test", "-p", "open-code-logic"], { cwd: root, stdio: "inherit" });
+if (logic.status !== 0) {
+  process.exit(logic.status ?? 1);
+}
 const r = spawnSync(cargo, ["test", "-p", "open-code-memory"], { cwd: root, stdio: "inherit" });
 process.exit(r.status === 0 ? 0 : r.status ?? 1);

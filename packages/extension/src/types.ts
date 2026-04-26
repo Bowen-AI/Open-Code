@@ -11,6 +11,15 @@ export interface ProposedChange {
   uri: string;
   oldText: string;
   newText: string;
+  hunks?: Array<{
+    id: string;
+    oldStartLine: number;
+    oldLineCount: number;
+    newStartLine: number;
+    newLineCount: number;
+    summary: string;
+  }>;
+  acceptedHunkIds?: string[];
   reason?: string;
 }
 

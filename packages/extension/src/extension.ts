@@ -3,9 +3,10 @@ import { HttpMemoryClient } from "./memoryClient";
 import { getProjectId } from "./util/projectId";
 import { GemmaLocalProvider } from "./providers/gemmaLocal";
 import { Discriminator } from "./mindset/discriminator";
-import { runAgentOnActiveEditor, reviewProposed } from "./agent/reviewController";
+import { revertLastChange, runAgentOnActiveEditor, reviewProposed } from "./agent/reviewController";
 import { AutodrivePanel } from "./autodrive/panel";
 import { registerInlineCompletion } from "./inline/completions";
+import { CredentialStore, normalizeCredentialRef } from "./util/credentials";
 import * as memoryd from "./memoryd";
 
 let mem: HttpMemoryClient | undefined;
@@ -19,6 +20,7 @@ function outputChannel() {
 export async function activate(context: vscode.ExtensionContext) {
   const ch = outputChannel();
   context.subscriptions.push(ch);
+  const credentials = new CredentialStore(context.secrets);
 
   const memUrl = await memoryd.startMemoryd(context);
   if (!memUrl) {
@@ -41,7 +43,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const cfg = vscode.workspace.getConfiguration("openCode");
   const base = cfg.get<string>("gemmaBaseUrl") ?? "http://127.0.0.1:11434";
-  llm = new GemmaLocalProvider(base);
+  const model = cfg.get<string>("gemmaModel") ?? "gemma3:4b";
+  llm = new GemmaLocalProvider(base, model);
   disc = new Discriminator(mem, llm);
 
   context.subscriptions.push(registerInlineCompletion(context, llm));
@@ -76,6 +79,30 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("open-code.reviewProposed", () => reviewProposed())
   );
   context.subscriptions.push(
+    vscode.commands.registerCommand("open-code.revertLastChange", () => revertLastChange(mem))
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("open-code.health", async () => {
+      const memoryOk = memUrl && mem ? await mem.health() : false;
+      const modelHealth = llm
+        ? await llm.health()
+        : { ok: false, baseUrl: base, model, error: "provider not initialized" };
+      const report = {
+        memory: {
+          ok: memoryOk,
+          url: memUrl ?? "not started"
+        },
+        model: modelHealth
+      };
+      ch.clear();
+      ch.appendLine(JSON.stringify(report, null, 2));
+      ch.show();
+      const modelText = modelHealth.ok ? `model ${modelHealth.model} reachable` : `model offline: ${modelHealth.error}`;
+      const memoryText = memoryOk ? "memory connected" : "memory unavailable";
+      void vscode.window.showInformationMessage(`Open Code health: ${memoryText}; ${modelText}.`);
+    })
+  );
+  context.subscriptions.push(
     vscode.commands.registerCommand("open-code.clearMemory", async () => {
       const m = getMem();
       if (!m) {
@@ -86,6 +113,42 @@ export async function activate(context: vscode.ExtensionContext) {
       void vscode.window.showInformationMessage(
         `Open Code: cleared memory for project (${n.deleted} rows).`
       );
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("open-code.setCredentialRef", async () => {
+      const refInput = await vscode.window.showInputBox({
+        prompt: "Credential reference name",
+        placeHolder: "example: openai-api-key"
+      });
+      if (!refInput) {
+        return;
+      }
+      const ref = normalizeCredentialRef(refInput);
+      const value = await vscode.window.showInputBox({
+        prompt: `Secret value for ${ref}`,
+        password: true,
+        ignoreFocusOut: true
+      });
+      if (value === undefined) {
+        return;
+      }
+      await credentials.set(ref, value);
+      void vscode.window.showInformationMessage(`Open Code: stored credential reference ${ref}.`);
+    })
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand("open-code.deleteCredentialRef", async () => {
+      const refInput = await vscode.window.showInputBox({
+        prompt: "Credential reference to delete",
+        placeHolder: "example: openai-api-key"
+      });
+      if (!refInput) {
+        return;
+      }
+      const ref = normalizeCredentialRef(refInput);
+      await credentials.delete(ref);
+      void vscode.window.showInformationMessage(`Open Code: deleted credential reference ${ref}.`);
     })
   );
   context.subscriptions.push(

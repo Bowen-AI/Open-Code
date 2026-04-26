@@ -5,13 +5,20 @@ use chrono::Utc;
 use rusqlite::{params, Connection};
 
 pub const DB_FILE: &str = "open_code_memory.db";
+pub const SCHEMA_VERSION: i64 = 1;
 
-/// Initialize schema. Safe to call on existing DBs (migrations TBD; v1 is create-if-not-exists).
+/// Initialize schema. Safe to call on existing DBs; future migrations should bump SCHEMA_VERSION.
 pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         r#"
         PRAGMA foreign_keys = ON;
         PRAGMA journal_mode = WAL;
+
+        CREATE TABLE IF NOT EXISTS schema_meta (
+            key         TEXT PRIMARY KEY,
+            value       TEXT NOT NULL,
+            updated_at  TEXT NOT NULL
+        );
 
         CREATE TABLE IF NOT EXISTS raw_evidence (
             id          TEXT PRIMARY KEY,
@@ -37,7 +44,22 @@ pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_sem_project ON semantic_records(project_id);
         "#,
     )?;
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta (key, value, updated_at) VALUES ('schema_version', ?1, ?2)",
+        params![SCHEMA_VERSION.to_string(), Utc::now().to_rfc3339()],
+    )?;
     Ok(())
+}
+
+pub fn schema_version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row(
+        "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+        [],
+        |r| {
+            let value: String = r.get(0)?;
+            Ok(value.parse::<i64>().unwrap_or(0))
+        },
+    )
 }
 
 fn hash_payload(bytes: &[u8]) -> Vec<u8> {
@@ -131,6 +153,7 @@ mod tests {
     fn init_and_append() {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
+        assert_eq!(schema_version(&conn).unwrap(), SCHEMA_VERSION);
         let id = append_raw(
             &conn,
             "proj1",

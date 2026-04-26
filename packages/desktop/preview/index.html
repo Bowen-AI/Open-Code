@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Open Code Logic Workspace Preview</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="workspace">
+      <header class="topbar">
+        <section class="identity" aria-label="Product">
+          <div class="mark">OC</div>
+          <div>
+            <p class="eyebrow">Test-drive MVP</p>
+            <h1 id="project-title">Open Code Logic Workspace</h1>
+          </div>
+        </section>
+        <section class="top-actions" aria-label="Preview actions">
+          <button type="button" data-action="reset">Reset demo</button>
+          <button type="button" data-action="paper">Paper view</button>
+          <button type="button" data-action="vscode">Open in VS Code</button>
+        </section>
+      </header>
+
+      <section class="status-strip" data-testid="status-strip">
+        <span id="status-line">MVP preview loaded.</span>
+        <span id="counts-line"></span>
+      </section>
+
+      <section class="model-panel" data-testid="model-panel" aria-label="Agent brain">
+        <div>
+          <p class="eyebrow">Agent brain</p>
+          <h2>Google Gemma via Ollama</h2>
+        </div>
+        <label>
+          Mode
+          <select id="model-choice" data-testid="model-choice"></select>
+        </label>
+        <label>
+          Ollama URL
+          <input id="model-base-url" data-testid="model-base-url" value="http://127.0.0.1:11434" />
+        </label>
+        <label>
+          Custom model
+          <input id="custom-model" data-testid="custom-model" placeholder="gemma3:4b" />
+        </label>
+        <button type="button" data-action="check-model" data-testid="check-model">Check brain</button>
+        <div class="model-status" id="model-status" data-testid="model-status">Not checked</div>
+      </section>
+
+      <section class="layout">
+        <aside class="topics" aria-label="Topics">
+          <div class="panel-title">
+            <span>Topics</span>
+            <span id="topic-count">0</span>
+          </div>
+          <div id="topic-list"></div>
+          <div class="running-count">
+            <span>Running agents</span>
+            <strong id="running-count">0</strong>
+          </div>
+        </aside>
+
+        <section class="flow" aria-label="Logic cards">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Paper-like flow</p>
+              <h2 id="topic-heading">Logic Runtime</h2>
+            </div>
+            <button type="button" data-action="toggle-conflicts">Toggle conflicts</button>
+          </div>
+          <section id="conflict-review" class="conflict-review" data-testid="conflict-review"></section>
+          <section id="card-grid" class="card-grid" data-testid="card-grid"></section>
+        </section>
+
+        <aside class="inspector" aria-label="Card inspector">
+          <div class="panel-title">
+            <span>Card Inspector</span>
+            <span id="selected-id"></span>
+          </div>
+          <form id="inspector-form">
+            <label>
+              Title
+              <input name="title" data-testid="title-input" />
+            </label>
+            <label>
+              Minimum summary
+              <textarea name="summary" rows="3" data-testid="summary-input"></textarea>
+            </label>
+            <label>
+              Design details
+              <textarea name="details" rows="8" data-testid="details-input"></textarea>
+            </label>
+            <label>
+              Status
+              <select name="status" data-testid="status-select">
+                <option value="draft">draft</option>
+                <option value="ready">ready</option>
+                <option value="running">running</option>
+                <option value="needs_human_logic_review">needs human logic review</option>
+                <option value="ready_to_merge">ready to merge</option>
+                <option value="merged">merged</option>
+                <option value="blocked">blocked</option>
+              </select>
+            </label>
+            <label>
+              Linked files
+              <textarea name="linkedFiles" rows="3" data-testid="files-input"></textarea>
+            </label>
+            <label>
+              Dependencies
+              <textarea name="dependencies" rows="2" data-testid="dependencies-input"></textarea>
+            </label>
+          </form>
+          <section id="selected-conflicts" class="selected-conflicts" data-testid="selected-conflicts"></section>
+        </aside>
+      </section>
+
+      <section class="bottom">
+        <article class="documentation">
+          <div class="panel-title">
+            <span>Documentation</span>
+            <span id="doc-format">Markdown</span>
+          </div>
+          <div class="doc-toolbar">
+            <label>
+              Presentation
+              <select id="doc-mode" data-testid="doc-mode"></select>
+            </label>
+          </div>
+          <div id="paper-output" class="doc-output markdown-output" data-testid="paper-output"></div>
+        </article>
+        <article class="activity">
+          <div class="panel-title">
+            <span>Agent Activity</span>
+            <span id="activity-count">0</span>
+          </div>
+          <div id="activity-log" data-testid="activity-log"></div>
+        </article>
+      </section>
+    </main>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
