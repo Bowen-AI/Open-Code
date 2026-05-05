@@ -58,6 +58,7 @@ for (const rel of [
   "docs/AGENT_HANDOFF.md",
   "docs/AGENT_RUNTIME.md",
   "docs/DOCUMENTATION_PRESENTATIONS.md",
+  "docs/E2E_READINESS.md",
   "docs/LOGIC_WORKSPACE.md",
   "docs/MVP_DELIVERY_TRACK.md",
   "docs/MVP_EXECUTION_PLAN.md",
@@ -67,6 +68,8 @@ for (const rel of [
   "packages/desktop/src/App.svelte",
   "packages/desktop/src-tauri/src/main.rs",
   "runtime/model-manifest.json",
+  "scripts/e2e-local-model.mjs",
+  "scripts/e2e-mvp.mjs",
   "packages/extension/test/runTest.mjs",
   "packages/extension/test/suite/index.js"
 ]) {
@@ -75,6 +78,7 @@ for (const rel of [
 
 const readme = read("README.md");
 assert(readme.includes("docs/AGENT_HANDOFF.md"), "README must link docs/AGENT_HANDOFF.md");
+assert(readme.includes("docs/E2E_READINESS.md"), "README must link docs/E2E_READINESS.md");
 
 const handoff = read("docs/AGENT_HANDOFF.md");
 for (const phrase of [

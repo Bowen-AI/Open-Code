@@ -98,6 +98,14 @@ fi
 
 cd "$ROOT"
 
+ENV_FILE="$TOOLCHAIN_DIR/env.sh"
+{
+  echo "export CARGO_HOME=\"$CARGO_HOME\""
+  echo "export RUSTUP_HOME=\"$RUSTUP_HOME\""
+  echo "export PATH=\"$CARGO_HOME/bin:$NODE_BIN_DIR:\$PATH\""
+  echo "export OPEN_CODE_GEMMA_MODEL=\"$MODEL\""
+} > "$ENV_FILE"
+
 echo "Installing JavaScript dependencies..."
 npm install
 
@@ -110,6 +118,8 @@ npm run build
 if command -v ollama >/dev/null 2>&1; then
   echo "Preparing local Gemma model: $MODEL"
   ollama pull "$MODEL"
+  echo "Verifying local Gemma response..."
+  OPEN_CODE_E2E_MODEL="$MODEL" OPEN_CODE_E2E_BASE_URL="http://127.0.0.1:11434" node scripts/e2e-local-model.mjs
   echo "Gemma is ready through Ollama. Base URL: http://127.0.0.1:11434"
 else
   echo
@@ -128,6 +138,7 @@ fi
 echo
 echo "Done."
 echo "Sandboxed toolchain path: $TOOLCHAIN_DIR"
+echo "Reusable environment file: $ENV_FILE"
 echo "For extension development in this shell, run:"
-echo "  export PATH=\"$CARGO_HOME/bin:$NODE_BIN_DIR:\$PATH\""
+echo "  . \"$ENV_FILE\""
 echo "  npm run watch"

@@ -27,6 +27,7 @@ For the concrete Mac/Linux execution path from this bootstrap to a smooth MVP, r
 | Topic | Document |
 |--------|----------|
 | Build, run, develop extension | [docs/BUILD.md](docs/BUILD.md) |
+| E2E local readiness | [docs/E2E_READINESS.md](docs/E2E_READINESS.md) |
 | Agent handoff and missing-pieces checklist | [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md) |
 | Fork model and product branch | [docs/GOVERNANCE.md](docs/GOVERNANCE.md) |
 | Releasable bar, Open VSX, models | [docs/RELEASE.md](docs/RELEASE.md) |
@@ -109,6 +110,8 @@ scripts/install-mvp-macos-linux.sh
 This bootstraps missing Node/Rust tools into the ignored `.open-code/toolchain/` sandbox, builds the extension and Rust memory daemon, and pulls the configured local model (`gemma3:4b` by default) when Ollama is installed.
 
 - **TypeScript** and **Rust** build through the sandboxed installer even when system `npm` / `cargo` are missing, as long as `curl` and network access are available.
+- The installer writes `.open-code/toolchain/env.sh`; source it in a new shell with `. .open-code/toolchain/env.sh`.
+- **Full local readiness E2E:** `npm run test:e2e` proves docs/bootstrap, desktop, extension, Rust logic/memory, and local Gemma via Ollama.
 - **Develop extension:** `npm run watch` and **Run Extension** in VS Code (see [docs/BUILD.md](docs/BUILD.md)).
 - **Package VSIX:** `npm run package` (output under `packages/extension/`).
 
