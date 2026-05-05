@@ -1,8 +1,12 @@
 const assert = require("node:assert");
+const Mocha = require("mocha");
 const vscode = require("vscode");
 
-suite("Open Code extension", () => {
-  test("activates and contributes core commands", async () => {
+function run() {
+  const mocha = new Mocha({ color: true });
+  const suite = Mocha.Suite.create(mocha.suite, "Open Code extension");
+
+  suite.addTest(new Mocha.Test("activates and contributes core commands", async () => {
     const extension = vscode.extensions.getExtension("open-code.open-code-vscode-extension");
     assert.ok(extension, "Open Code extension should be discoverable");
     await extension.activate();
@@ -22,5 +26,17 @@ suite("Open Code extension", () => {
     ]) {
       assert.ok(commands.includes(command), `Missing command ${command}`);
     }
+  }));
+
+  return new Promise((resolve, reject) => {
+    mocha.run((failures) => {
+      if (failures > 0) {
+        reject(new Error(`${failures} extension test(s) failed.`));
+      } else {
+        resolve();
+      }
+    });
   });
-});
+}
+
+module.exports = { run };

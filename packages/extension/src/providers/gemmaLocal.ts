@@ -180,9 +180,10 @@ function extractModelNames(body: unknown): string[] | undefined {
   if (!body || typeof body !== "object") {
     return undefined;
   }
+  type ModelListItem = { id?: string; name?: string; model?: string };
   const value = body as {
-    models?: Array<{ name?: string; model?: string; id?: string }>;
-    data?: Array<{ id?: string; name?: string }>;
+    models?: ModelListItem[];
+    data?: ModelListItem[];
   };
   const names = (value.models ?? value.data)
     ?.map((m) => m.name ?? m.model ?? m.id)
