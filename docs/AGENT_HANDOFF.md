@@ -95,8 +95,8 @@ This is the canonical quick-scan file for future AI agents and engineers. Read t
 - MVP model pulls are runtime-managed by Ollama; non-Ollama release downloads are not checksum-verified yet.
 - The local HTTP services should stay bound to `127.0.0.1`; do not widen binding without authentication and threat modeling.
 
-### Current Validation Problems
+### Latest Validation
 
-- This desktop shell starts without system `npm`, `cargo`, and `rustc`.
-- The sandboxed installer is designed to fetch them into `.open-code/toolchain/`, but that requires network access. In this environment, DNS lookup for `nodejs.org` failed and network escalation was rejected by the host.
-- Full confidence requires running the sandboxed installer successfully or running CI.
+- On May 5, 2026, `scripts/install-mvp-macos-linux.sh` completed on macOS with no system `npm`, `cargo`, or `rustc`: it bootstrapped Node/Rust into `.open-code/toolchain/`, installed JavaScript dependencies, built the extension, built the desktop app, built the Rust logic/memory crates, and pulled `gemma3:4b` through Ollama.
+- Verified locally: `npm run build`, `npm run check:desktop`, `npm run test:desktop:preview`, `npm run test:logic`, `npm run test:rust:required`, and the `@vscode/test-electron` activation smoke test.
+- In the Codex sandbox, direct Cargo commands need `CARGO_HOME` and `RUSTUP_HOME` pointed at `.open-code/toolchain/`; the VS Code Electron smoke test needs host-level launch permission.

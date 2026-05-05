@@ -576,7 +576,7 @@
             value={selectedCard.summary}
             on:input={(event) =>
               updateCard(selectedCard.id, { summary: event.currentTarget.value })}
-          />
+          ></textarea>
         </label>
         <label>
           Design details
@@ -585,7 +585,7 @@
             value={selectedCard.details}
             on:input={(event) =>
               updateCard(selectedCard.id, { details: event.currentTarget.value })}
-          />
+          ></textarea>
         </label>
         <label>
           Status
@@ -609,7 +609,7 @@
             rows="3"
             value={selectedCard.linkedFiles.join(", ")}
             on:input={(event) => updateLinkedFiles(selectedCard, event.currentTarget.value)}
-          />
+          ></textarea>
         </label>
         <label>
           Dependencies
@@ -617,7 +617,7 @@
             rows="2"
             value={selectedCard.dependencies.join(", ")}
             on:input={(event) => updateDependencies(selectedCard, event.currentTarget.value)}
-          />
+          ></textarea>
         </label>
 
         {#if selectedCard.implementationBranch}
