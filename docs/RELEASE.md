@@ -3,8 +3,9 @@
 ## Reproducible build
 
 1. `npm install`
-2. `npm run build` (TypeScript extension + Rust `open-code-memoryd` if `cargo` is in `PATH`)
-3. Extension VSIX: `cd packages/extension && npx @vscode/vsce package` (install `@vscode/vsce` dev dependency if you prefer it scripted)
+2. `npm run test:e2e` on a Mac/Linux machine with Ollama and the target local Gemma model ready.
+3. `npm run build` (TypeScript extension + Rust `open-code-memoryd` if `cargo` is in `PATH`)
+4. Extension VSIX: `cd packages/extension && npx @vscode/vsce package` (install `@vscode/vsce` dev dependency if you prefer it scripted)
 
 ## Open VSX
 

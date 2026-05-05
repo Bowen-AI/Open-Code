@@ -31,6 +31,12 @@ The sandboxed bootstrap uses:
 
 The script still requires `curl`, `tar`, and network access when local Node/Rust tools are missing.
 
+After a successful installer run, reuse the generated environment in future shells:
+
+```bash
+. .open-code/toolchain/env.sh
+```
+
 ## Build everything
 
 ```bash
@@ -38,6 +44,16 @@ npm run build
 ```
 
 This compiles the VS Code extension (`packages/extension`), the desktop frontend (`packages/desktop`), the Rust logic core (`crates/open-code-logic`), and the Rust memory daemon (`crates/open-code-memory`).
+
+## E2E readiness
+
+For the full "download, build, and use local models" proof:
+
+```bash
+npm run test:e2e
+```
+
+This runs the bootstrap/docs checks, extension typecheck and activation smoke test, desktop typecheck and preview workflow tests, workspace build, Rust logic and memory tests, and a local Ollama/Gemma response check. See [E2E_READINESS.md](E2E_READINESS.md) for CI and model-runtime variants.
 
 ## Develop the logic desktop app
 

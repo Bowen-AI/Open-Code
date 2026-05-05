@@ -53,7 +53,7 @@ Open Code aims to be a **logic-first, agentic coding workspace**: users shape th
 | **Memory scopes** | **Host** / **user**-wide stores and `credential_ref` **audit** are not productized; **per-project** is approximated via `workspace` folder id. |
 | **Autodrive** | Webview + memory is present; no **formal** step budgets, allowlists, or **block** of auto-apply. |
 | **Mindset pluggins** | One LLM call with a **list** of enabled mindsets, not separate critic modules, budgets, or **async** critic queues. |
-| **E2E tests** | No `@vscode/test-electron` suite yet. |
+| **E2E tests** | `npm run test:e2e` now covers docs/bootstrap, desktop preview workflows, extension activation, Rust logic/memory, workspace build, and a strict local Ollama/Gemma response. CI runs `npm run test:e2e:ci`, skipping only the multi-GB model call. |
 
 ---
 
@@ -65,7 +65,7 @@ Open Code aims to be a **logic-first, agentic coding workspace**: users shape th
 4. **Vector retrieval** — Add optional **embedder** and ANN (or SQLite extension) for semantic search; always **point back** to **raw** rows.
 5. **Credentials** — Wire **SecretStorage** for any non-local API keys; keep memory as **metadata only** ([SECURITY](SECURITY.md)).
 6. **Promote to fork** — When stable, place the extension under `extensions/` in a **Code-OSS** fork and wire **product.json** for a branded app ([GOVERNANCE](GOVERNANCE.md), [FORK_AND_RELEASE](FORK_AND_RELEASE.md)).
-7. **Test matrix** — Add minimal **e2e** (activate extension, one command) in CI; keep **fork-health** for upstream lineage.
+7. **Test matrix** — Keep extending the E2E matrix toward packaged-app flows, managed runtime download, memory retention/export, and fork-health checks.
 
 ---
 

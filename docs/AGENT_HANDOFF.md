@@ -18,7 +18,8 @@ This is the canonical quick-scan file for future AI agents and engineers. Read t
 - Basic memory clear/show commands exist for the current project id.
 - Hunk proposals, accepted/rejected hunk ids, stale blocks, and latest-change reverts are logged to raw memory for change tracking.
 - Partial discriminator exists with mindset toggles and prompt/edit/commit hooks that write critic summaries to memory.
-- The Mac/Linux installer can bootstrap missing Node/Rust tools into ignored `.open-code/toolchain/`, build the extension and memory daemon, and pull `gemma3:4b` when Ollama is installed.
+- The Mac/Linux installer can bootstrap missing Node/Rust tools into ignored `.open-code/toolchain/`, build the extension and memory daemon, write `.open-code/toolchain/env.sh`, pull `gemma3:4b` when Ollama is installed, and verify one local model response.
+- `npm run test:e2e` is the strict local readiness matrix across docs/bootstrap, desktop, extension, Rust logic/memory, and local Gemma via Ollama. `npm run test:e2e:ci` skips only the multi-GB model call.
 - CI builds/checks Rust and TypeScript on Ubuntu and macOS. A dependency-free bootstrap check verifies core commands, docs, tests, manifest, and model defaults. `@vscode/test-electron` activation smoke tests are wired into the extension test script.
 
 ## Missing Pieces Inventory
@@ -97,6 +98,6 @@ This is the canonical quick-scan file for future AI agents and engineers. Read t
 
 ### Latest Validation
 
-- On May 5, 2026, `scripts/install-mvp-macos-linux.sh` completed on macOS with no system `npm`, `cargo`, or `rustc`: it bootstrapped Node/Rust into `.open-code/toolchain/`, installed JavaScript dependencies, built the extension, built the desktop app, built the Rust logic/memory crates, and pulled `gemma3:4b` through Ollama.
-- Verified locally: `npm run build`, `npm run check:desktop`, `npm run test:desktop:preview`, `npm run test:logic`, `npm run test:rust:required`, and the `@vscode/test-electron` activation smoke test.
+- On May 5, 2026, `scripts/install-mvp-macos-linux.sh` completed on macOS with no system `npm`, `cargo`, or `rustc`: it bootstrapped Node/Rust into `.open-code/toolchain/`, installed JavaScript dependencies, built the extension, built the desktop app, built the Rust logic/memory crates, pulled `gemma3:4b` through Ollama, and verified a local model response.
+- Verified locally: `npm run build`, `npm run check:desktop`, `npm run test:desktop:preview`, `npm run test:logic`, `npm run test:rust:required`, `npm run test:e2e:model`, and the `@vscode/test-electron` activation smoke test.
 - In the Codex sandbox, direct Cargo commands need `CARGO_HOME` and `RUSTUP_HOME` pointed at `.open-code/toolchain/`; the VS Code Electron smoke test needs host-level launch permission.
