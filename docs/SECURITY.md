@@ -11,6 +11,8 @@
 
 - **Raw** evidence may include file paths, diffs, and tool output—treat the SQLite database as **sensitive** for many projects. Protect disk encryption and file permissions.
 - **Clear project memory** removes rows for the current workspace id from the local DB (see "Clear memory" command).
+- `open-code-memoryd` binds only to `127.0.0.1` and should not be exposed outside the local machine. Do not add permissive browser CORS to the daemon for GA; extension and desktop callers should use local process or localhost clients instead of cross-origin browser access.
+- Memory reads must fail closed on corrupt rows. Do not silently skip malformed raw evidence because that hides data corruption from health checks and exports.
 
 ## Reporting
 

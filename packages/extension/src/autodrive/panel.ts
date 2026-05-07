@@ -1,4 +1,5 @@
 import * as vscode from "vscode";
+import * as crypto from "crypto";
 import { HttpMemoryClient } from "../memoryClient";
 import { MemoryKind } from "../types";
 import { GemmaLocalProvider } from "../providers/gemmaLocal";
@@ -24,7 +25,7 @@ export class AutodrivePanel {
       vscode.ViewColumn.Two,
       { enableScripts: true, retainContextWhenHidden: true }
     );
-    this.panel.webview.html = this.html();
+    this.panel.webview.html = this.html(this.panel.webview);
     this.panel.webview.onDidReceiveMessage(async (m) => {
       if (m.type === "stop") {
         this.currentAbort?.abort();
@@ -41,14 +42,16 @@ export class AutodrivePanel {
         const abort = new AbortController();
         this.currentAbort = abort;
         this.panel.webview.postMessage({ type: "status", text: "Thinking..." });
-        await this.mem.appendRaw({
-          projectId,
-          sessionId,
-          kind: "message" as MemoryKind,
-          payload: { role: "user", text }
-        });
-        await this.disc.onPrompt(text, "prompt");
         let reply: string;
+        await this.rememberMessage(projectId, sessionId, "user", text);
+        try {
+          await this.disc.onPrompt(text, "prompt");
+        } catch (e) {
+          this.panel.webview.postMessage({
+            type: "status",
+            text: `Critic skipped: ${(e as Error).message}`
+          });
+        }
         try {
           reply = await this.llm.complete(
             [
@@ -65,12 +68,7 @@ export class AutodrivePanel {
           this.currentAbort = undefined;
           this.panel.webview.postMessage({ type: "status", text: "" });
         }
-        await this.mem.appendRaw({
-          projectId,
-          sessionId,
-          kind: "message" as MemoryKind,
-          payload: { role: "assistant", text: reply }
-        });
+        await this.rememberMessage(projectId, sessionId, "assistant", reply);
         this.panel.webview.postMessage({ type: "assistant", text: reply });
       }
     });
@@ -91,11 +89,34 @@ export class AutodrivePanel {
     AutodrivePanel.current = new AutodrivePanel(mem, llm, disc);
   }
 
-  private html() {
+  private async rememberMessage(
+    projectId: string,
+    sessionId: string,
+    role: "user" | "assistant",
+    text: string
+  ): Promise<void> {
+    try {
+      await this.mem.appendRaw({
+        projectId,
+        sessionId,
+        kind: "message" as MemoryKind,
+        payload: { role, text }
+      });
+    } catch (e) {
+      this.panel.webview.postMessage({
+        type: "status",
+        text: `Memory write failed: ${(e as Error).message}`
+      });
+    }
+  }
+
+  private html(webview: vscode.Webview) {
+    const nonce = crypto.randomBytes(16).toString("base64");
     return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; script-src 'nonce-${nonce}';">
   <style>
     body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); }
     #log { min-height: 200px; white-space: pre-wrap; }
@@ -113,7 +134,7 @@ export class AutodrivePanel {
     <button id="go">Send</button>
     <button id="stop">Stop</button>
   </div>
-  <script>
+  <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
     const log = document.getElementById("log");
     const inp = document.getElementById("in");

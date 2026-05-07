@@ -6,6 +6,7 @@ import { MemoryKind } from "../types";
 import { getProjectId, getSessionId } from "../util/projectId";
 import { GemmaLocalProvider } from "../providers/gemmaLocal";
 import { computeLineHunks, detectLineEnding, TextHunk } from "./diffHunks";
+import { stripMaybeFences } from "./textSanitizer";
 
 let lastProposed: ProposedChange | undefined;
 let lastApplied: { uri: string; beforeText: string; afterText: string; changeId: string } | undefined;
@@ -29,7 +30,7 @@ export async function runAgentOnActiveEditor(
   const projectId = getProjectId();
   const sessionId = getSessionId();
   const prompt = `Rewrite the following file content for clarity and small improvements. Output only the new file text, no markdown fences.\n\n---\n${oldText.slice(0, 32_000)}`;
-  void vscode.window.withProgress(
+  return vscode.window.withProgress(
     { location: vscode.ProgressLocation.Notification, title: "Open Code: agent", cancellable: true },
     async (progress, token) => {
       const abort = new AbortController();
@@ -182,19 +183,6 @@ export async function runAgentOnActiveEditor(
       }
     }
   );
-}
-
-function stripMaybeFences(s: string): string {
-  const t = s.trim();
-  if (t.startsWith("```")) {
-    const n = t.indexOf("\n");
-    const rest = t.slice(n + 1);
-    const end = rest.lastIndexOf("```");
-    if (end > 0) {
-      return rest.slice(0, end).trim();
-    }
-  }
-  return t;
 }
 
 async function chooseHunks(hunks: TextHunk[]): Promise<TextHunk[] | undefined> {

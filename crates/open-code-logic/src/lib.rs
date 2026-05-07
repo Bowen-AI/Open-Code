@@ -297,10 +297,11 @@ impl AgentCoordinator {
         }
 
         let branch = branch_for_card(card);
+        let card_id_slug = slugify(&card.id);
         let worktree = self
             .project_root
             .join(WORKTREE_DIR)
-            .join(format!("{}-{}", card.id, slugify(&card.title)));
+            .join(format!("{}-{}", card_id_slug, slugify(&card.title)));
 
         Ok(AgentWorkPlan {
             card_id: card.id.clone(),
@@ -352,7 +353,7 @@ impl AgentCoordinator {
 }
 
 pub fn branch_for_card(card: &LogicCard) -> String {
-    format!("open-code/card/{}-{}", card.id, slugify(&card.title))
+    format!("open-code/card/{}-{}", slugify(&card.id), slugify(&card.title))
 }
 
 pub fn project_file_path(project_root: impl AsRef<Path>) -> PathBuf {
@@ -408,12 +409,16 @@ pub fn apply_conflict_report(project: &mut LogicProject) {
             .filter(|conflict| conflict.card_ids.iter().any(|id| id == &card.id))
             .cloned()
             .collect();
-        if card
+        let has_blocking_human_conflict = card
             .conflicts
             .iter()
-            .any(|conflict| conflict.human_required && conflict.status != ConflictStatus::Resolved)
-        {
-            card.status = CardStatus::NeedsHumanLogicReview;
+            .any(|conflict| conflict.human_required && conflict.status != ConflictStatus::Resolved);
+
+        match (has_blocking_human_conflict, card.status) {
+            (true, CardStatus::Draft | CardStatus::Merged | CardStatus::Blocked) => {}
+            (true, _) => card.status = CardStatus::NeedsHumanLogicReview,
+            (false, CardStatus::NeedsHumanLogicReview) => card.status = CardStatus::Ready,
+            (false, _) => {}
         }
     }
 }
@@ -851,6 +856,26 @@ mod tests {
     }
 
     #[test]
+    fn branch_and_worktree_paths_slug_card_ids() {
+        let p = project(
+            vec![card(
+                "../Card:Unsafe ID",
+                "Voice UI",
+                CardStatus::Ready,
+                &["src/App.svelte"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "../Card:Unsafe ID").unwrap();
+
+        assert_eq!(plan.branch, "open-code/card/card-unsafe-id-voice-ui");
+        assert!(plan
+            .worktree_path
+            .ends_with(".open-code/worktrees/card-unsafe-id-voice-ui"));
+    }
+
+    #[test]
     fn file_overlap_is_agent_merge_work_not_human_logic_review() {
         let p = project(
             vec![
@@ -981,5 +1006,50 @@ mod tests {
         assert!(md.contains("Agent Merge Work"));
         assert!(md.contains("`src/app.ts`"));
         assert!(md.contains("open-code/card/logic-a-logic-a"));
+    }
+
+    #[test]
+    fn conflict_report_restores_ready_after_human_blocker_is_removed() {
+        let mut p = project(
+            vec![
+                card("logic-a", "Logic A", CardStatus::Ready, &[]),
+                card("logic-b", "Logic B", CardStatus::Ready, &[]),
+            ],
+            vec![LogicLink {
+                from: "logic-a".to_string(),
+                to: "logic-b".to_string(),
+                kind: LinkKind::ConflictsWith,
+                reason: "Temporary product decision conflict.".to_string(),
+            }],
+        );
+
+        apply_conflict_report(&mut p);
+        assert_eq!(
+            p.card("logic-a").unwrap().status,
+            CardStatus::NeedsHumanLogicReview
+        );
+
+        p.links.clear();
+        apply_conflict_report(&mut p);
+        assert_eq!(p.card("logic-a").unwrap().status, CardStatus::Ready);
+        assert!(p.card("logic-a").unwrap().conflicts.is_empty());
+    }
+
+    #[test]
+    fn conflict_report_preserves_draft_blocked_and_merged_statuses() {
+        let mut draft = card("logic-a", "Logic A", CardStatus::Draft, &[]);
+        draft.dependencies = vec!["missing-card".to_string()];
+        let mut blocked = card("logic-b", "Logic B", CardStatus::Blocked, &[]);
+        blocked.dependencies = vec!["missing-card".to_string()];
+        let mut merged = card("logic-c", "Logic C", CardStatus::Merged, &[]);
+        merged.dependencies = vec!["missing-card".to_string()];
+        let mut p = project(vec![draft, blocked, merged], vec![]);
+
+        apply_conflict_report(&mut p);
+
+        assert_eq!(p.card("logic-a").unwrap().status, CardStatus::Draft);
+        assert_eq!(p.card("logic-b").unwrap().status, CardStatus::Blocked);
+        assert_eq!(p.card("logic-c").unwrap().status, CardStatus::Merged);
+        assert_eq!(p.card("logic-a").unwrap().conflicts.len(), 1);
     }
 }

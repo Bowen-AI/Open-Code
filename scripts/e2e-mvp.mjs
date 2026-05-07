@@ -24,6 +24,11 @@ const steps = [
     args: ["run", "-w", "open-code-vscode-extension", "check"]
   },
   {
+    stream: "extension provider unit",
+    command: "npm",
+    args: ["run", "-w", "open-code-vscode-extension", "test:unit"]
+  },
+  {
     stream: "desktop Svelte contract",
     command: "npm",
     args: ["run", "check:desktop"]
@@ -39,6 +44,11 @@ const steps = [
     args: ["run", "build"]
   },
   {
+    stream: "extension package",
+    command: "npm",
+    args: ["run", "package"]
+  },
+  {
     stream: "logic core",
     command: "npm",
     args: ["run", "test:logic"]
@@ -47,6 +57,11 @@ const steps = [
     stream: "memory daemon",
     command: "npm",
     args: ["run", "test:rust:required"]
+  },
+  {
+    stream: "memory daemon HTTP probe",
+    command: "npm",
+    args: ["run", "test:memoryd:probe"]
   }
 ];
 

@@ -14,6 +14,7 @@ This is the canonical quick-scan file for future AI agents and engineers. Read t
 
 - VS Code extension prototype in `packages/extension` with command registration, Autodrive webview with stop/cancel, inline completions, local Gemma/Ollama-compatible HTTP provider, health command, SecretStorage credential-ref commands, memory commands, and the Open Code Dark theme.
 - Rust `open-code-memoryd` service in `crates/open-code-memory` with localhost HTTP endpoints, SQLite raw + semantic tables, and a schema version record.
+- `npm run test:memoryd:probe` starts and probes `open-code-memoryd` health/append/recent/semantic/clear when localhost listeners are allowed; CI and release hosts should run it strictly.
 - Agent edit loop can propose a whole-file replacement, compute line hunks, open a native VS Code diff, block stale applies, and apply all or selected hunks through `WorkspaceEdit`.
 - Basic memory clear/show commands exist for the current project id.
 - Hunk proposals, accepted/rejected hunk ids, stale blocks, and latest-change reverts are logged to raw memory for change tracking.
@@ -86,7 +87,7 @@ This is the canonical quick-scan file for future AI agents and engineers. Read t
 - The hunk diff is dependency-free and line-based; later work should use a proven diff/patch library or VS Code-native review model if available.
 - Health output is useful for agents but should become a first-run guided readiness flow for users.
 - The installer now bootstraps Node/Rust into a sandbox, but product install should also hide Ollama/runtime details and surface plain recovery actions.
-- CI should package the VSIX and smoke-test the memory daemon binary on both Ubuntu and macOS.
+- CI should package the VSIX and run the strict memory daemon HTTP probe on both Ubuntu and macOS.
 
 ### Vulnerabilities / Security Risks
 
@@ -98,6 +99,7 @@ This is the canonical quick-scan file for future AI agents and engineers. Read t
 
 ### Latest Validation
 
-- On May 5, 2026, `scripts/install-mvp-macos-linux.sh` completed on macOS with no system `npm`, `cargo`, or `rustc`: it bootstrapped Node/Rust into `.open-code/toolchain/`, installed JavaScript dependencies, built the extension, built the desktop app, built the Rust logic/memory crates, pulled `gemma3:4b` through Ollama, and verified a local model response.
-- Verified locally: `npm run build`, `npm run check:desktop`, `npm run test:desktop:preview`, `npm run test:logic`, `npm run test:rust:required`, `npm run test:e2e:model`, and the `@vscode/test-electron` activation smoke test.
-- In the Codex sandbox, direct Cargo commands need `CARGO_HOME` and `RUSTUP_HOME` pointed at `.open-code/toolchain/`; the VS Code Electron smoke test needs host-level launch permission.
+- On May 7, 2026, sandboxed verification passed through `.open-code/toolchain/`: `npm run lint`, `npm run -w open-code-vscode-extension test:unit`, `npm run test:desktop:preview`, `cargo test --workspace --all-targets`, `npm run build`, `npm run package`, and `OPEN_CODE_E2E_SKIP_EXTENSION=1 npm run test:e2e:ci`.
+- `npm run test:memoryd:probe` is wired into the E2E matrix. In this Codex sandbox it reports a non-strict skip because localhost listener startup returns `Operation not permitted`; run `OPEN_CODE_MEMORYD_PROBE_STRICT=1 npm run test:memoryd:probe` on a release-capable Mac/Linux host.
+- Blocked here: `npm run test:e2e:ci` at the invalid cached macOS VS Code test host signature, `npm run test:e2e:model` because Ollama is not reachable, and `cargo fmt --check`/`cargo clippy` because the sandboxed Rust toolchain lacks `rustfmt` and `clippy`.
+- In the Codex sandbox, direct Cargo/npm commands need `.open-code/toolchain/env.sh` or equivalent `CARGO_HOME`, `RUSTUP_HOME`, and `PATH` values.

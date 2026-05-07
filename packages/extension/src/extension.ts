@@ -44,7 +44,15 @@ export async function activate(context: vscode.ExtensionContext) {
   const cfg = vscode.workspace.getConfiguration("openCode");
   const base = cfg.get<string>("gemmaBaseUrl") ?? "http://127.0.0.1:11434";
   const model = cfg.get<string>("gemmaModel") ?? "gemma3:4b";
-  llm = new GemmaLocalProvider(base, model);
+  try {
+    llm = new GemmaLocalProvider(base, model);
+  } catch (e) {
+    ch.appendLine(`Open Code: invalid model runtime URL "${base}": ${(e as Error).message}`);
+    void vscode.window.showWarningMessage(
+      "Open Code: invalid model runtime URL; falling back to http://127.0.0.1:11434."
+    );
+    llm = new GemmaLocalProvider("http://127.0.0.1:11434", model);
+  }
   disc = new Discriminator(mem, llm);
 
   context.subscriptions.push(registerInlineCompletion(context, llm));
@@ -97,7 +105,9 @@ export async function activate(context: vscode.ExtensionContext) {
       ch.clear();
       ch.appendLine(JSON.stringify(report, null, 2));
       ch.show();
-      const modelText = modelHealth.ok ? `model ${modelHealth.model} reachable` : `model offline: ${modelHealth.error}`;
+      const modelText = modelHealth.ok
+        ? `model ${modelHealth.model} ready`
+        : `model not ready: ${modelHealth.error}`;
       const memoryText = memoryOk ? "memory connected" : "memory unavailable";
       void vscode.window.showInformationMessage(`Open Code health: ${memoryText}; ${modelText}.`);
     })

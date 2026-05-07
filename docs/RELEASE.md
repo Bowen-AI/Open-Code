@@ -1,11 +1,16 @@
 # Release and distribution
 
+Before treating any artifact as GA-ready, review and resolve the blocker list in [GA_RELEASE_READINESS.md](GA_RELEASE_READINESS.md). The current repository can pass source-level MVP checks, but the GA path still requires the product shell, real worker, runtime packaging, signing, and strict release-machine E2E work called out there.
+
 ## Reproducible build
 
 1. `npm install`
-2. `npm run test:e2e` on a Mac/Linux machine with Ollama and the target local Gemma model ready.
-3. `npm run build` (TypeScript extension + Rust `open-code-memoryd` if `cargo` is in `PATH`)
-4. Extension VSIX: `cd packages/extension && npx @vscode/vsce package` (install `@vscode/vsce` dev dependency if you prefer it scripted)
+2. `. .open-code/toolchain/env.sh` if you are using the sandboxed toolchain.
+3. `cargo fmt --check` and `cargo clippy --workspace --all-targets -- -D warnings` with `rustfmt` and `clippy` installed.
+4. `OPEN_CODE_MEMORYD_PROBE_STRICT=1 npm run test:memoryd:probe` on a host that can bind localhost.
+5. `npm run test:e2e` on a Mac/Linux machine with Ollama and the target local Gemma model ready.
+6. `npm run build`
+7. `npm run package`
 
 ## Open VSX
 

@@ -3,6 +3,7 @@
   "displayName": "Open Code",
   "description": "Memory-native agent: local Gemma, two-layer memory, Autodrive, mindset critics",
   "version": "0.1.0",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/open-code/Open-Code"
@@ -140,7 +141,9 @@
     "compile": "tsc -p .",
     "watch": "tsc -p . -w",
     "check": "tsc -p . --noEmit",
-    "test": "npm run compile && node ./test/runTest.mjs",
+    "test:unit": "npm run compile && npm run test:unit:compiled",
+    "test:unit:compiled": "node ./test/provider.test.mjs && node ./test/unit/textSanitizer.test.js && node ./test/unit/diffHunks.test.js",
+    "test": "npm run compile && npm run test:unit:compiled && node ./test/runTest.mjs",
     "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
