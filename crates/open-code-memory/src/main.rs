@@ -12,7 +12,6 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tower_http::cors::CorsLayer;
 
 #[derive(Clone)]
 struct AppState {
@@ -65,7 +64,6 @@ async fn main() -> Result<(), String> {
         .route("/v1/semantic/append", post(sem_append))
         .route("/v1/raw/clear", post(raw_clear))
         .route("/v1/raw/recent", get(raw_recent))
-        .layer(CorsLayer::permissive())
         .with_state(state);
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 0));

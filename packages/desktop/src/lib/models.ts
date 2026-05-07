@@ -3,6 +3,7 @@ import type { ConflictRecord, LogicCard } from "./types";
 export const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MODEL = "gemma3:4b";
 export const DEFAULT_MODE = "auto";
+export const OLLAMA_DEFAULT_PORT = "11434";
 
 export interface ModelChoice {
   id: string;
@@ -74,6 +75,17 @@ export const AUTO_MODEL_CANDIDATES = [
   "gemma3"
 ];
 
+export function normalizeOllamaBaseUrl(baseUrl = OLLAMA_BASE_URL): string {
+  const raw = String(baseUrl || OLLAMA_BASE_URL).trim() || OLLAMA_BASE_URL;
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  const url = new URL(withProtocol);
+  if (!url.port && (url.protocol === "http:" || url.protocol === "https:")) {
+    url.port = OLLAMA_DEFAULT_PORT;
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString().replace(/\/+$/, "");
+}
+
 export function modelFromChoice(choice: string, customModel = ""): string {
   if (choice === "custom") {
     return customModel.trim() || DEFAULT_MODEL;
@@ -111,7 +123,7 @@ export async function checkOllama(
   choice = DEFAULT_MODE,
   customModel = ""
 ): Promise<ModelHealth> {
-  const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+  const cleanBaseUrl = normalizeOllamaBaseUrl(baseUrl);
   const response = await fetchWithTimeout(`${cleanBaseUrl}/api/tags`, {}, 1800);
   if (!response.ok) {
     throw new Error(`Ollama health failed: HTTP ${response.status}`);
@@ -133,7 +145,7 @@ export async function askOllama(
   model: string,
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
 ): Promise<string> {
-  const cleanBaseUrl = baseUrl.replace(/\/+$/, "");
+  const cleanBaseUrl = normalizeOllamaBaseUrl(baseUrl);
   const response = await fetchWithTimeout(
     `${cleanBaseUrl}/api/chat`,
     {

@@ -4,7 +4,7 @@ Open Code is shifting into an **open, logic-first coding workspace**: users shap
 
 The new product center is a lightweight **Tauri + Svelte desktop app** in [`packages/desktop/`](packages/desktop/) backed by the Rust logic core in [`crates/open-code-logic/`](crates/open-code-logic/). The previous VS Code extension remains in [`packages/extension/`](packages/extension/) as a bootstrap/prototype, but it is no longer the primary UX direction.
 
-Read the new architecture notes at [docs/LOGIC_WORKSPACE.md](docs/LOGIC_WORKSPACE.md), [docs/MVP_DELIVERY_TRACK.md](docs/MVP_DELIVERY_TRACK.md), [docs/AGENT_RUNTIME.md](docs/AGENT_RUNTIME.md), and [docs/DOCUMENTATION_PRESENTATIONS.md](docs/DOCUMENTATION_PRESENTATIONS.md).
+Read the new architecture notes at [docs/LOGIC_WORKSPACE.md](docs/LOGIC_WORKSPACE.md), [docs/MVP_DELIVERY_TRACK.md](docs/MVP_DELIVERY_TRACK.md), [docs/GA_RELEASE_READINESS.md](docs/GA_RELEASE_READINESS.md), [docs/AGENT_RUNTIME.md](docs/AGENT_RUNTIME.md), and [docs/DOCUMENTATION_PRESENTATIONS.md](docs/DOCUMENTATION_PRESENTATIONS.md).
 
 ## Current status (this repository)
 
@@ -28,6 +28,7 @@ For the concrete Mac/Linux execution path from this bootstrap to a smooth MVP, r
 |--------|----------|
 | Build, run, develop extension | [docs/BUILD.md](docs/BUILD.md) |
 | E2E local readiness | [docs/E2E_READINESS.md](docs/E2E_READINESS.md) |
+| GA release blockers and execution plan | [docs/GA_RELEASE_READINESS.md](docs/GA_RELEASE_READINESS.md) |
 | Agent handoff and missing-pieces checklist | [docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md) |
 | Fork model and product branch | [docs/GOVERNANCE.md](docs/GOVERNANCE.md) |
 | Releasable bar, Open VSX, models | [docs/RELEASE.md](docs/RELEASE.md) |
@@ -120,4 +121,4 @@ This bootstraps missing Node/Rust tools into the ignored `.open-code/toolchain/`
 1. Read **[docs/AGENT_HANDOFF.md](docs/AGENT_HANDOFF.md)** for the scannable missing-pieces checklist and current implementation state.
 2. Read **[docs/MVP_AND_ROADMAP.md](docs/MVP_AND_ROADMAP.md)** for **MVP / gaps / suggestions**.
 3. Decide fork mode and, when ready, import Code-OSS and promote `packages/extension` into the fork.
-4. Ship documented, reproducible releases per [docs/RELEASE.md](docs/RELEASE.md) and [docs/FORK_AND_RELEASE.md](docs/FORK_AND_RELEASE.md).
+4. Work through the GA blocker list in [docs/GA_RELEASE_READINESS.md](docs/GA_RELEASE_READINESS.md), then ship documented, reproducible releases per [docs/RELEASE.md](docs/RELEASE.md) and [docs/FORK_AND_RELEASE.md](docs/FORK_AND_RELEASE.md).

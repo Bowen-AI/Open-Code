@@ -17,9 +17,11 @@ import {
 } from "../logic.js";
 import {
   DEFAULT_MODEL,
+  checkOllama,
   chooseAutoModel,
   installHint,
   modelFromChoice,
+  normalizeOllamaBaseUrl,
   parseOllamaTags
 } from "../models.js";
 
@@ -194,10 +196,36 @@ test("Ollama tags and install hints are parseable", () => {
   assert.equal(installHint("gemma3:4b"), "Install Ollama, then run: ollama pull gemma3:4b");
 });
 
+test("Ollama base URL normalization preserves the default local port", () => {
+  assert.equal(normalizeOllamaBaseUrl("127.0.0.1"), "http://127.0.0.1:11434");
+  assert.equal(normalizeOllamaBaseUrl("http://localhost"), "http://localhost:11434");
+  assert.equal(normalizeOllamaBaseUrl("http://localhost:1234/"), "http://localhost:1234");
+});
+
+test("model health uses the normalized Ollama endpoint and detects installation", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = "";
+  globalThis.fetch = async (url) => {
+    requestedUrl = String(url);
+    return new Response(JSON.stringify({ models: [{ name: "gemma3:4b" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  try {
+    const health = await checkOllama("http://127.0.0.1", "gemma3:4b");
+    assert.equal(requestedUrl, "http://127.0.0.1:11434/api/tags");
+    assert.equal(health.selectedModel, "gemma3:4b");
+    assert.equal(health.installed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 let failed = 0;
 for (const { name, fn } of tests) {
   try {
-    fn();
+    await fn();
     console.log(`ok - ${name}`);
   } catch (error) {
     failed += 1;

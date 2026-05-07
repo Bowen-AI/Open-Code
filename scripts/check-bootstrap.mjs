@@ -59,6 +59,7 @@ for (const rel of [
   "docs/AGENT_RUNTIME.md",
   "docs/DOCUMENTATION_PRESENTATIONS.md",
   "docs/E2E_READINESS.md",
+  "docs/GA_RELEASE_READINESS.md",
   "docs/LOGIC_WORKSPACE.md",
   "docs/MVP_DELIVERY_TRACK.md",
   "docs/MVP_EXECUTION_PLAN.md",
@@ -70,6 +71,7 @@ for (const rel of [
   "runtime/model-manifest.json",
   "scripts/e2e-local-model.mjs",
   "scripts/e2e-mvp.mjs",
+  "scripts/probe-memoryd.mjs",
   "packages/extension/test/runTest.mjs",
   "packages/extension/test/suite/index.js"
 ]) {
@@ -79,6 +81,14 @@ for (const rel of [
 const readme = read("README.md");
 assert(readme.includes("docs/AGENT_HANDOFF.md"), "README must link docs/AGENT_HANDOFF.md");
 assert(readme.includes("docs/E2E_READINESS.md"), "README must link docs/E2E_READINESS.md");
+assert(readme.includes("docs/GA_RELEASE_READINESS.md"), "README must link docs/GA_RELEASE_READINESS.md");
+
+const rootPackage = JSON.parse(read("package.json"));
+assert(rootPackage.scripts["test:memoryd:probe"], "package.json must include test:memoryd:probe");
+assert(
+  read("scripts/e2e-mvp.mjs").includes("test:memoryd:probe"),
+  "E2E matrix must include memory daemon HTTP probe"
+);
 
 const handoff = read("docs/AGENT_HANDOFF.md");
 for (const phrase of [

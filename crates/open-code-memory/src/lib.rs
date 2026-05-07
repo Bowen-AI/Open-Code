@@ -2,6 +2,7 @@
 //! Shared schema used by the HTTP service and tests.
 
 use chrono::Utc;
+use rusqlite::types::Type;
 use rusqlite::{params, Connection};
 
 pub const DB_FILE: &str = "open_code_memory.db";
@@ -96,7 +97,10 @@ pub fn append_semantic(
 ) -> rusqlite::Result<String> {
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let source_json = source_raw_ids.map(|s| serde_json::to_string(s).unwrap());
+    let source_json = source_raw_ids
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
     conn.execute(
         "INSERT INTO semantic_records (id, project_id, kind, body_json, source_raw_ids_json, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -122,6 +126,7 @@ pub fn recent_raw(
     project_id: &str,
     limit: i64,
 ) -> rusqlite::Result<Vec<serde_json::Value>> {
+    let limit = limit.clamp(0, 500);
     let mut stmt = conn.prepare(
         "SELECT id, project_id, session_id, kind, payload_json, created_at
          FROM raw_evidence WHERE project_id = ?1 ORDER BY created_at DESC LIMIT ?2",
@@ -130,7 +135,7 @@ pub fn recent_raw(
         .query_map(params![project_id, limit], |r| {
             let payload_json: String = r.get(4)?;
             let payload: serde_json::Value = serde_json::from_str(&payload_json)
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))?;
+                .map_err(|e| rusqlite::Error::FromSqlConversionFailure(4, Type::Text, e.into()))?;
             Ok(serde_json::json!({
                 "id": r.get::<_, String>(0)?,
                 "projectId": r.get::<_, String>(1)?,
@@ -140,9 +145,8 @@ pub fn recent_raw(
                 "createdAt": r.get::<_, String>(5)?,
             }))
         })?
-        .filter_map(|x| x.ok())
         .collect();
-    Ok(rows)
+    rows
 }
 
 #[cfg(test)]
@@ -165,5 +169,64 @@ mod tests {
         assert!(!id.is_empty());
         let r = recent_raw(&conn, "proj1", 10).unwrap();
         assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn recent_raw_clamps_limits() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        for n in 0..3 {
+            append_raw(
+                &conn,
+                "proj1",
+                Some("sess1"),
+                "message",
+                &serde_json::json!({ "n": n }),
+            )
+            .unwrap();
+        }
+
+        assert_eq!(recent_raw(&conn, "proj1", -1).unwrap().len(), 0);
+        assert_eq!(recent_raw(&conn, "proj1", 2).unwrap().len(), 2);
+        assert_eq!(recent_raw(&conn, "proj1", 10_000).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn recent_raw_surfaces_corrupt_payloads() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO raw_evidence (id, project_id, session_id, kind, payload_json, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params!["bad", "proj1", "sess1", "message", "{not-json", Utc::now().to_rfc3339()],
+        )
+        .unwrap();
+
+        assert!(recent_raw(&conn, "proj1", 10).is_err());
+    }
+
+    #[test]
+    fn clear_project_removes_raw_and_semantic_records() {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        let raw_id = append_raw(
+            &conn,
+            "proj1",
+            Some("sess1"),
+            "message",
+            &serde_json::json!({ "text": "hi" }),
+        )
+        .unwrap();
+        append_semantic(
+            &conn,
+            "proj1",
+            "summary",
+            &serde_json::json!({ "text": "hi" }),
+            Some(&[raw_id]),
+        )
+        .unwrap();
+
+        assert_eq!(clear_project(&conn, "proj1").unwrap(), 2);
+        assert!(recent_raw(&conn, "proj1", 10).unwrap().is_empty());
     }
 }

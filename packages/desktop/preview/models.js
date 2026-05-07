@@ -1,6 +1,7 @@
 export const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MODEL = "gemma3:4b";
 export const DEFAULT_MODE = "auto";
+export const OLLAMA_DEFAULT_PORT = "11434";
 
 export const MODEL_CHOICES = [
   {
@@ -61,6 +62,17 @@ export function normalizeModelName(model) {
   return String(model || "").trim();
 }
 
+export function normalizeOllamaBaseUrl(baseUrl = OLLAMA_BASE_URL) {
+  const raw = String(baseUrl || OLLAMA_BASE_URL).trim() || OLLAMA_BASE_URL;
+  const withProtocol = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+  const url = new URL(withProtocol);
+  if (!url.port && (url.protocol === "http:" || url.protocol === "https:")) {
+    url.port = OLLAMA_DEFAULT_PORT;
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  return url.toString().replace(/\/+$/, "");
+}
+
 export function modelFromChoice(choice, customModel = "") {
   if (choice === "custom") return normalizeModelName(customModel) || DEFAULT_MODEL;
   if (choice === "auto") return DEFAULT_MODEL;
@@ -81,7 +93,7 @@ export function parseOllamaTags(payload) {
 }
 
 export async function checkOllama(baseUrl = OLLAMA_BASE_URL, choice = DEFAULT_MODE, customModel = "") {
-  const cleanBaseUrl = String(baseUrl || OLLAMA_BASE_URL).replace(/\/+$/, "");
+  const cleanBaseUrl = normalizeOllamaBaseUrl(baseUrl);
   const response = await fetchWithTimeout(`${cleanBaseUrl}/api/tags`, {}, 1800);
   if (!response.ok) {
     throw new Error(`Ollama health failed: HTTP ${response.status}`);
@@ -100,7 +112,7 @@ export async function checkOllama(baseUrl = OLLAMA_BASE_URL, choice = DEFAULT_MO
 }
 
 export async function askOllama(baseUrl, model, messages) {
-  const cleanBaseUrl = String(baseUrl || OLLAMA_BASE_URL).replace(/\/+$/, "");
+  const cleanBaseUrl = normalizeOllamaBaseUrl(baseUrl);
   const response = await fetchWithTimeout(`${cleanBaseUrl}/api/chat`, {
     method: "POST",
     headers: {
