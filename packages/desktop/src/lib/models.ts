@@ -1,4 +1,4 @@
-import type { ConflictRecord, LogicCard } from "./types";
+import type { AgentFileEdit, AgentLinkedFile, ConflictRecord, LogicCard } from "./types";
 
 export const OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 export const DEFAULT_MODEL = "gemma3:4b";
@@ -143,7 +143,8 @@ export async function checkOllama(
 export async function askOllama(
   baseUrl: string,
   model: string,
-  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>
+  messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+  options: OllamaRequestOptions = {}
 ): Promise<string> {
   const cleanBaseUrl = normalizeOllamaBaseUrl(baseUrl);
   const response = await fetchWithTimeout(
@@ -153,13 +154,24 @@ export async function askOllama(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model, messages, stream: false })
     },
-    120000
+    options.timeoutMs ?? 120000,
+    options.signal
   );
   if (!response.ok) {
     throw new Error(`Ollama chat failed: HTTP ${response.status} ${await response.text()}`);
   }
   const body = (await response.json()) as { message?: { content?: string }; response?: string };
   return String(body.message?.content ?? body.response ?? JSON.stringify(body));
+}
+
+export interface StructuredAgentEditResult {
+  note: string;
+  edits: AgentFileEdit[];
+}
+
+export interface OllamaRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export function buildCardAgentMessages(card: LogicCard, conflicts: ConflictRecord[]) {
@@ -184,8 +196,101 @@ export function buildCardAgentMessages(card: LogicCard, conflicts: ConflictRecor
   ];
 }
 
+export function buildCardAgentEditMessages(
+  card: LogicCard,
+  conflicts: ConflictRecord[],
+  files: AgentLinkedFile[]
+) {
+  return [
+    {
+      role: "system" as const,
+      content: [
+        "You are the Open Code structured worker. Return only JSON.",
+        "The JSON shape is {\"note\":\"...\",\"edits\":[{\"file\":\"...\",\"expectedText\":\"...\",\"newText\":\"...\",\"summary\":\"...\"}]}",
+        "Only edit listed files. expectedText must exactly match the current file text. newText must be the complete replacement text for that file.",
+        "If the card cannot be implemented safely, return an explanatory note and an empty edits array."
+      ].join("\n")
+    },
+    {
+      role: "user" as const,
+      content: [
+        `Card: ${card.title} (${card.id})`,
+        `Summary: ${card.summary}`,
+        `Details: ${card.details}`,
+        `Linked files: ${card.linkedFiles.join(", ") || "none"}`,
+        `Dependencies: ${card.dependencies.join(", ") || "none"}`,
+        `Preflight conflicts: ${conflicts.map((conflict) => conflict.reason).join(" | ") || "none"}`,
+        "Current linked file contents:",
+        ...files.map((file) =>
+          [`--- ${file.file}`, file.text, `--- end ${file.file}`].join("\n")
+        )
+      ].join("\n")
+    }
+  ];
+}
+
+export function parseStructuredAgentEditResponse(
+  content: string,
+  allowedFiles: string[]
+): StructuredAgentEditResult {
+  const parsed = JSON.parse(extractJsonObject(content)) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Structured worker response was not a JSON object.");
+  }
+
+  const value = parsed as { note?: unknown; edits?: unknown };
+  const note = typeof value.note === "string" ? value.note : "";
+  const edits = Array.isArray(value.edits) ? value.edits : [];
+  const allowed = new Set(allowedFiles);
+  return {
+    note: note.trim() || "Structured worker returned file edits.",
+    edits: edits.map((edit) => parseStructuredEdit(edit, allowed))
+  };
+}
+
 export function installHint(model = DEFAULT_MODEL): string {
   return `Install Ollama, then run: ollama pull ${model}`;
+}
+
+function parseStructuredEdit(edit: unknown, allowedFiles: Set<string>): AgentFileEdit {
+  if (!edit || typeof edit !== "object") {
+    throw new Error("Structured worker edit was not an object.");
+  }
+  const value = edit as {
+    file?: unknown;
+    expectedText?: unknown;
+    newText?: unknown;
+    summary?: unknown;
+  };
+  if (typeof value.file !== "string" || !allowedFiles.has(value.file)) {
+    throw new Error(`Structured worker proposed an out-of-scope file: ${String(value.file)}`);
+  }
+  if (typeof value.expectedText !== "string" || typeof value.newText !== "string") {
+    throw new Error(`Structured worker edit for ${value.file} is missing exact text fields.`);
+  }
+  return {
+    file: value.file,
+    expectedText: value.expectedText,
+    newText: value.newText,
+    summary: typeof value.summary === "string" ? value.summary : "Structured worker edit."
+  };
+}
+
+function extractJsonObject(content: string): string {
+  const trimmed = content.trim();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    return trimmed;
+  }
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) {
+    return fenced[1].trim();
+  }
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return trimmed.slice(start, end + 1);
+  }
+  throw new Error("Structured worker response did not contain JSON.");
 }
 
 function expandInstalledModelName(name: string): string[] {
@@ -196,12 +301,24 @@ function expandInstalledModelName(name: string): string[] {
   return tag === "latest" ? [name, family] : [name];
 }
 
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  options: RequestInit,
+  timeoutMs: number,
+  externalSignal?: AbortSignal
+): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) {
+    controller.abort(externalSignal.reason);
+  } else {
+    externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+  }
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
   }
 }

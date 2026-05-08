@@ -47,16 +47,28 @@ Done when:
 
 - Start with one card in one worktree.
 - Prompt the local Gemma brain with card summary, details, linked files, dependencies, and conflicts.
+- Persist production worker run metadata with model, mode, prompt summary, branch/worktree, diagnostics, conflicts, and scoped proposed changes.
+- Reject unsafe linked files and proposed changes outside the card's linked-file scope before treating worker output as reviewable.
+- Apply structured linked-file replacements only inside the card worktree and only when the file still matches the content the worker read.
 - Write implementation notes and then code changes on the card branch.
 - Escalate only if the implementation requires changing logic.
 
 Done when:
 
 - One ready card creates a branch/worktree.
-- The model reads the card and writes an implementation note.
-- The worker records an `agentRuns[]` entry with proposed file changes.
-- The worker edits at least one linked file.
+- The model reads the card and writes an implementation note. The production Tauri path now records this as a notes-only `agentRuns[]` entry.
+- The worker records an `agentRuns[]` entry with scoped proposed file changes.
+- The backend worker edit path can write at least one linked file after stale-file, worktree-scope, linked-file-scope, path, duplicate, no-op, and size checks.
+- The desktop model loop can request structured JSON edits from Gemma/Ollama and route them through the guarded backend apply path.
+- The desktop can mark the latest reviewable worker run merged or rejected through the backend; rejected worktrees remain intact for inspection instead of being silently cleaned up.
+- The desktop can cancel a running card agent through the backend; cancellation records a `cancelled` run, moves the card out of `running`, and preserves branch/worktree metadata for inspection.
+- In-flight model calls receive an abort signal, and late worker completions are ignored after cancellation instead of making a cancelled card reviewable again.
+- Rejected, failed, or cancelled worker runs can be reset for retry; reset records an `abandoned` audit run, clears active branch/worktree metadata, and the production Tauri path cleans up only scoped agent worktrees/branches.
+- Structured worker edits now persist review hunk metadata with old/new line ranges, and the desktop plus preview inspectors surface those hunks before merge/reject closeout.
+- Accepted review closeout in the production Tauri path commits proposed linked-file changes on the card branch, merges that branch into the project root, attempts scoped worktree/branch cleanup, records git diagnostics, and clears active card branch/worktree metadata.
 - The branch becomes ready to merge.
+
+Current gap: model-generated whole-file replacements can now reach the guarded backend path and receive basic hunk inspection, review closeout with git merge, cancellation, and reset-for-retry, but the desktop still needs per-hunk accept/reject, inline diff review, true resume from partial worker progress, stronger merge-conflict recovery, and broader integration coverage before this is GA-grade.
 
 ## P2: Packaged runtime
 

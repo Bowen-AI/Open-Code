@@ -1,5 +1,6 @@
 import {
   cardsForTopic,
+  cancelAgentRun,
   cloneProject,
   completeAgentRun,
   detectConflicts,
@@ -7,6 +8,7 @@ import {
   latestAgentRun,
   markCardMerged,
   renderDocumentation,
+  resetAgentWork,
   resolveHumanConflict,
   sampleProject,
   startAgent,
@@ -33,6 +35,7 @@ let selectedCardId = storedState?.selectedCardId || project.cards[0].id;
 let docMode = storedState?.docMode || "paper";
 let showConflicts = true;
 let activity = storedState?.activity || [];
+let activeAgentRequests = new Map();
 let modelState = {
   baseUrl: OLLAMA_BASE_URL,
   choice: "auto",
@@ -93,6 +96,14 @@ document.addEventListener("click", (event) => {
 
   if (action === "merge-card") {
     mergeCard(cardId);
+  }
+
+  if (action === "cancel-agent") {
+    cancelAgent(cardId);
+  }
+
+  if (action === "reset-agent") {
+    resetAgent(cardId);
   }
 
   if (action === "open-card") {
@@ -395,6 +406,10 @@ function renderCard(card, index, conflicts) {
   const branch = card.implementationBranch
     ? `<code class="branch">${escapeHtml(card.implementationBranch)}</code>`
     : "";
+  const latestRun = latestAgentRun(card);
+  const canReset =
+    card.status === "blocked" &&
+    ["cancelled", "failed", "rejected"].includes(latestRun?.status);
   return `
     <article class="logic-card ${card.id === selectedCardId ? "selected" : ""} ${card.status === "running" ? "running" : ""}" data-testid="logic-card">
       <button type="button" class="card-body" data-action="select-card" data-card-id="${escapeHtml(card.id)}">
@@ -415,7 +430,17 @@ function renderCard(card, index, conflicts) {
         <button type="button" data-action="run-agent" data-card-id="${escapeHtml(card.id)}">Run agent</button>
         ${
           card.status === "ready_to_merge"
-            ? `<button type="button" data-action="merge-card" data-card-id="${escapeHtml(card.id)}">Mark merged</button>`
+            ? `<button type="button" data-action="merge-card" data-card-id="${escapeHtml(card.id)}">Merge branch</button>`
+            : ""
+        }
+        ${
+          card.status === "running"
+            ? `<button type="button" data-action="cancel-agent" data-card-id="${escapeHtml(card.id)}">Cancel run</button>`
+            : ""
+        }
+        ${
+          canReset
+            ? `<button type="button" data-action="reset-agent" data-card-id="${escapeHtml(card.id)}">Reset for retry</button>`
             : ""
         }
         <button type="button" data-action="open-card" data-card-id="${escapeHtml(card.id)}">VS Code</button>
@@ -473,7 +498,7 @@ function renderAgentRun(run) {
   return `
     <article class="agent-run">
       <strong>${escapeHtml(run.model)} · ${escapeHtml(run.mode)}</strong>
-      <span>${escapeHtml(run.at)}</span>
+      <span>${escapeHtml(run.status || "ready_for_review")} · ${escapeHtml(run.at)}</span>
       <p>${escapeHtml(run.note)}</p>
       <div class="proposed-changes">
         ${(run.proposedChanges || [])
@@ -483,12 +508,36 @@ function renderAgentRun(run) {
                 <code>${escapeHtml(change.file)}</code>
                 <span>${escapeHtml(change.status)}</span>
                 <p>${escapeHtml(change.summary)}</p>
+                ${renderReviewHunks(change)}
               </div>
             `
           )
           .join("")}
       </div>
     </article>
+  `;
+}
+
+function renderReviewHunks(change) {
+  const hunks = change.hunks || [];
+  if (hunks.length === 0) {
+    return "";
+  }
+  return `
+    <div class="review-hunks" aria-label="Review hunks for ${escapeHtml(change.file)}">
+      ${hunks
+        .map(
+          (hunk) => `
+            <div class="review-hunk">
+              <span>${escapeHtml(hunk.status)}</span>
+              <code>${escapeHtml(hunk.id)}</code>
+              <p>old ${Number(hunk.oldStartLine)}:${Number(hunk.oldLineCount)} · new ${Number(hunk.newStartLine)}:${Number(hunk.newLineCount)}</p>
+              <small>${escapeHtml(hunk.summary)}</small>
+            </div>
+          `
+        )
+        .join("")}
+    </div>
   `;
 }
 
@@ -527,18 +576,45 @@ async function runAgent(cardId) {
     const result = startAgent(project, cardId);
     project = result.project;
     selectedCardId = result.plan.cardId;
+    const activeRequest = beginAgentRequest(cardId);
     let modelNote = "Brain not connected; simulated planning only.";
-    if (modelState.online && card) {
-      try {
-        modelNote = await askOllama(
-          modelState.baseUrl,
-          modelState.selectedModel,
-          buildCardAgentMessages(card, result.plan.preflightConflicts)
-        );
-      } catch (error) {
-        modelState.online = false;
-        modelNote = `Brain call failed: ${error.message}`;
+    try {
+      if (modelState.online && card) {
+        try {
+          modelNote = await askOllama(
+            modelState.baseUrl,
+            modelState.selectedModel,
+            buildCardAgentMessages(card, result.plan.preflightConflicts),
+            { signal: activeRequest.controller.signal }
+          );
+        } catch (error) {
+          if (isAbortError(error) || activeRequest.controller.signal.aborted) {
+            throw error;
+          }
+          modelState.online = false;
+          modelNote = `Brain call failed: ${error.message}`;
+        }
       }
+      if (!isActiveAgentRequest(cardId, activeRequest.token)) {
+        activity = [
+          `Ignored late preview worker result for ${cardId}; cancellation is authoritative.`,
+          ...activity
+        ];
+        setStatus(`${cardId} cancellation was already recorded; late model output was ignored.`);
+        return;
+      }
+    } catch (error) {
+      if (isAbortError(error) || activeRequest.controller.signal.aborted) {
+        activity = [
+          `Stopped in-flight preview worker for ${cardId}; late model output cannot update the card.`,
+          ...activity
+        ];
+        setStatus(`${cardId} cancellation requested; in-flight model work stopped.`);
+        return;
+      }
+      throw error;
+    } finally {
+      clearActiveAgentRequest(cardId, activeRequest.token);
     }
     const completed = completeAgentRun(project, cardId, {
       model: modelState.selectedModel,
@@ -576,10 +652,43 @@ function resolveConflict(conflictId, action) {
 function mergeCard(cardId) {
   try {
     project = markCardMerged(project, cardId);
-    activity = [`Marked ${cardId} merged.`, ...activity];
-    setStatus(`${cardId} marked merged.`);
+    activity = [`Merged ${cardId}.`, ...activity];
+    setStatus(`${cardId} merged.`);
   } catch (error) {
     activity = [`Merge failed: ${error.message}`, ...activity];
+    setStatus(error.message);
+  }
+}
+
+function cancelAgent(cardId) {
+  try {
+    const stoppedActiveRequest = abortActiveAgentRequest(cardId);
+    const result = cancelAgentRun(project, cardId, {
+      note: "Preview user cancelled the running card agent before review."
+    });
+    project = result.project;
+    activity = [
+      `Cancelled ${cardId}; worktree metadata preserved.`,
+      ...(stoppedActiveRequest ? [`Stopped in-flight model request for ${cardId}.`] : []),
+      ...activity
+    ];
+    setStatus(`${cardId} cancelled.`);
+  } catch (error) {
+    activity = [`Cancellation failed: ${error.message}`, ...activity];
+    setStatus(error.message);
+  }
+}
+
+function resetAgent(cardId) {
+  try {
+    const result = resetAgentWork(project, cardId, {
+      note: "Preview user reset blocked agent work for a clean retry."
+    });
+    project = result.project;
+    activity = [`Reset ${cardId} for retry.`, ...activity];
+    setStatus(`${cardId} reset for retry.`);
+  } catch (error) {
+    activity = [`Reset failed: ${error.message}`, ...activity];
     setStatus(error.message);
   }
 }
@@ -590,6 +699,41 @@ function selectedCard() {
 
 function findCard(cardId) {
   return project.cards.find((card) => card.id === cardId);
+}
+
+function beginAgentRequest(cardId) {
+  const existing = activeAgentRequests.get(cardId);
+  existing?.controller.abort();
+  const request = {
+    token: `${cardId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    controller: new AbortController()
+  };
+  activeAgentRequests = new Map(activeAgentRequests);
+  activeAgentRequests.set(cardId, request);
+  return request;
+}
+
+function abortActiveAgentRequest(cardId) {
+  const request = activeAgentRequests.get(cardId);
+  if (!request) return false;
+  request.controller.abort();
+  activeAgentRequests = new Map(activeAgentRequests);
+  activeAgentRequests.delete(cardId);
+  return true;
+}
+
+function clearActiveAgentRequest(cardId, token) {
+  if (activeAgentRequests.get(cardId)?.token !== token) return;
+  activeAgentRequests = new Map(activeAgentRequests);
+  activeAgentRequests.delete(cardId);
+}
+
+function isActiveAgentRequest(cardId, token) {
+  return activeAgentRequests.get(cardId)?.token === token;
+}
+
+function isAbortError(error) {
+  return Boolean(error && typeof error === "object" && error.name === "AbortError");
 }
 
 function parseList(value) {

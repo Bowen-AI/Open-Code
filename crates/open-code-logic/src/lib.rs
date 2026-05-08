@@ -14,6 +14,8 @@ pub const LOGIC_DIR: &str = "logic";
 pub const PROJECT_FILE: &str = "open-code.project.json";
 pub const PAPER_FILE: &str = "open-code.paper.md";
 pub const WORKTREE_DIR: &str = ".open-code/worktrees";
+pub const MAX_WORKER_EDIT_BYTES: usize = 1_000_000;
+const MAX_HUNK_LCS_CELLS: usize = 750_000;
 
 #[derive(Debug)]
 pub enum LogicError {
@@ -21,7 +23,19 @@ pub enum LogicError {
     Json(serde_json::Error),
     CardNotFound(String),
     CardNotReady { card_id: String, status: CardStatus },
+    CardNotRunning { card_id: String, status: CardStatus },
+    CardNotReadyToMerge { card_id: String, status: CardStatus },
+    CardNotResettable { card_id: String, status: CardStatus },
+    AgentPlanMismatch { card_id: String },
+    NoReviewableAgentRun { card_id: String },
+    NoResettableAgentRun { card_id: String },
     HumanLogicReviewRequired { card_id: String, conflicts: Vec<ConflictRecord> },
+    UnsafeLinkedFile { card_id: String, file: String },
+    ProposedChangeOutOfScope { card_id: String, file: String },
+    ProposedChangeTooLarge { card_id: String, file: String, bytes: usize },
+    StaleLinkedFile { card_id: String, file: String },
+    NoAgentFileEdits { card_id: String },
+    InvalidWorktreePath { card_id: String, worktree_path: String },
 }
 
 impl fmt::Display for LogicError {
@@ -33,10 +47,63 @@ impl fmt::Display for LogicError {
             LogicError::CardNotReady { card_id, status } => {
                 write!(f, "logic card {card_id} is not ready to run: {status:?}")
             }
+            LogicError::CardNotRunning { card_id, status } => {
+                write!(f, "logic card {card_id} is not running: {status:?}")
+            }
+            LogicError::CardNotReadyToMerge { card_id, status } => {
+                write!(f, "logic card {card_id} is not ready to merge: {status:?}")
+            }
+            LogicError::CardNotResettable { card_id, status } => {
+                write!(
+                    f,
+                    "logic card {card_id} cannot be reset for retry from status {status:?}"
+                )
+            }
+            LogicError::AgentPlanMismatch { card_id } => write!(
+                f,
+                "agent run plan does not match the recorded branch/worktree for {card_id}"
+            ),
+            LogicError::NoReviewableAgentRun { card_id } => {
+                write!(f, "logic card {card_id} has no latest reviewable agent run")
+            }
+            LogicError::NoResettableAgentRun { card_id } => {
+                write!(f, "logic card {card_id} has no terminal agent run to reset")
+            }
             LogicError::HumanLogicReviewRequired { card_id, conflicts } => write!(
                 f,
                 "logic card {card_id} needs human review before agent work: {} conflict(s)",
                 conflicts.len()
+            ),
+            LogicError::UnsafeLinkedFile { card_id, file } => write!(
+                f,
+                "logic card {card_id} links unsafe file path `{file}`; linked files must be relative project paths"
+            ),
+            LogicError::ProposedChangeOutOfScope { card_id, file } => write!(
+                f,
+                "agent run for {card_id} proposed out-of-scope file `{file}`"
+            ),
+            LogicError::ProposedChangeTooLarge {
+                card_id,
+                file,
+                bytes,
+            } => write!(
+                f,
+                "agent run for {card_id} proposed `{file}` at {bytes} bytes, above the safe edit limit"
+            ),
+            LogicError::StaleLinkedFile { card_id, file } => write!(
+                f,
+                "agent run for {card_id} cannot apply `{file}` because the file changed since the worker read it"
+            ),
+            LogicError::NoAgentFileEdits { card_id } => write!(
+                f,
+                "agent run for {card_id} did not include any structured file edits"
+            ),
+            LogicError::InvalidWorktreePath {
+                card_id,
+                worktree_path,
+            } => write!(
+                f,
+                "agent run for {card_id} has an invalid worktree path `{worktree_path}`"
             ),
         }
     }
@@ -192,11 +259,92 @@ pub struct AgentRun {
     pub at: String,
     pub model: String,
     pub mode: String,
+    #[serde(default = "default_agent_run_status")]
+    pub status: AgentRunStatus,
+    #[serde(default)]
+    pub prompt_summary: String,
     pub note: String,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub worktree_path: Option<String>,
+    #[serde(default)]
+    pub diagnostics: Vec<AgentDiagnostic>,
     #[serde(default)]
     pub proposed_changes: Vec<ProposedFileChange>,
     #[serde(default)]
     pub preflight_conflicts: Vec<ConflictRecord>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentRunStatus {
+    Started,
+    NotesOnly,
+    ReadyForReview,
+    Applied,
+    Rejected,
+    Failed,
+    Cancelled,
+    Abandoned,
+}
+
+fn default_agent_run_status() -> AgentRunStatus {
+    AgentRunStatus::ReadyForReview
+}
+
+fn default_notes_only_status() -> AgentRunStatus {
+    AgentRunStatus::NotesOnly
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentDiagnostic {
+    pub level: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentRunInput {
+    #[serde(default)]
+    pub id: Option<String>,
+    pub model: String,
+    pub mode: String,
+    #[serde(default = "default_notes_only_status")]
+    pub status: AgentRunStatus,
+    #[serde(default)]
+    pub prompt_summary: String,
+    pub note: String,
+    #[serde(default)]
+    pub started_at: Option<String>,
+    #[serde(default)]
+    pub finished_at: Option<String>,
+    #[serde(default)]
+    pub diagnostics: Vec<AgentDiagnostic>,
+    #[serde(default)]
+    pub proposed_changes: Vec<ProposedFileChange>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentFileEdit {
+    pub file: String,
+    pub expected_text: String,
+    pub new_text: String,
+    #[serde(default)]
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentLinkedFile {
+    pub file: String,
+    pub text: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,6 +353,27 @@ pub struct ProposedFileChange {
     pub file: String,
     pub summary: String,
     pub status: String,
+    #[serde(default)]
+    pub hunks: Vec<ProposedChangeHunk>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ProposedChangeHunk {
+    pub id: String,
+    pub old_start_line: usize,
+    pub old_line_count: usize,
+    pub new_start_line: usize,
+    pub new_line_count: usize,
+    pub status: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentReviewDisposition {
+    Merged,
+    Rejected,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -295,6 +464,7 @@ impl AgentCoordinator {
                 conflicts: human_conflicts,
             });
         }
+        let linked_files = safe_normalized_files(card)?;
 
         let branch = branch_for_card(card);
         let card_id_slug = slugify(&card.id);
@@ -307,7 +477,7 @@ impl AgentCoordinator {
             card_id: card.id.clone(),
             branch,
             worktree_path: worktree.to_string_lossy().to_string(),
-            linked_files: normalized_files(&card.linked_files),
+            linked_files,
             summary: card.summary.clone(),
             preflight_conflicts,
         })
@@ -349,6 +519,372 @@ impl AgentCoordinator {
         card.worktree_path = Some(plan.worktree_path.clone());
         card.conflicts = plan.preflight_conflicts.clone();
         Ok(())
+    }
+
+    pub fn record_agent_run(
+        &self,
+        project: &mut LogicProject,
+        plan: &AgentWorkPlan,
+        input: AgentRunInput,
+    ) -> Result<AgentRun, LogicError> {
+        let card = project
+            .card_mut(&plan.card_id)
+            .ok_or_else(|| LogicError::CardNotFound(plan.card_id.clone()))?;
+        if card.status != CardStatus::Running {
+            return Err(LogicError::CardNotRunning {
+                card_id: plan.card_id.clone(),
+                status: card.status,
+            });
+        }
+        if card.implementation_branch.as_deref() != Some(plan.branch.as_str())
+            || card.worktree_path.as_deref() != Some(plan.worktree_path.as_str())
+        {
+            return Err(LogicError::AgentPlanMismatch {
+                card_id: plan.card_id.clone(),
+            });
+        }
+
+        let linked_files = safe_normalized_files(card)?;
+        let proposed_changes = if input.proposed_changes.is_empty() {
+            proposed_changes_for_card(card, &plan.preflight_conflicts)
+        } else {
+            input.proposed_changes
+        };
+        validate_proposed_changes(&card.id, &linked_files, &proposed_changes)?;
+
+        let at = input
+            .finished_at
+            .clone()
+            .or_else(|| input.started_at.clone())
+            .unwrap_or_else(|| "manual".to_string());
+        let id = input
+            .id
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("run-{}-{}", slugify(&card.id), card.agent_runs.len() + 1));
+        let run = AgentRun {
+            id,
+            at,
+            model: input.model,
+            mode: input.mode,
+            status: input.status,
+            prompt_summary: input.prompt_summary,
+            note: input.note,
+            started_at: input.started_at,
+            finished_at: input.finished_at,
+            branch: Some(plan.branch.clone()),
+            worktree_path: Some(plan.worktree_path.clone()),
+            diagnostics: input.diagnostics,
+            proposed_changes,
+            preflight_conflicts: plan.preflight_conflicts.clone(),
+        };
+
+        card.agent_runs.push(run.clone());
+        card.conflicts = plan.preflight_conflicts.clone();
+        match run.status {
+            AgentRunStatus::ReadyForReview => card.status = CardStatus::ReadyToMerge,
+            AgentRunStatus::Applied => card.status = CardStatus::Merged,
+            AgentRunStatus::Rejected => card.status = CardStatus::Blocked,
+            AgentRunStatus::Failed => card.status = CardStatus::Blocked,
+            AgentRunStatus::Started
+            | AgentRunStatus::NotesOnly
+            | AgentRunStatus::Cancelled
+            | AgentRunStatus::Abandoned => {}
+        }
+
+        Ok(run)
+    }
+
+    pub fn read_agent_linked_files(
+        &self,
+        project: &LogicProject,
+        plan: &AgentWorkPlan,
+    ) -> Result<Vec<AgentLinkedFile>, LogicError> {
+        let card = self.running_card_for_plan(project, plan)?;
+        let linked_files = safe_normalized_files(card)?;
+        let worktree_root = self.worktree_root(plan)?;
+        linked_files
+            .into_iter()
+            .map(|file| {
+                let path = worktree_root.join(&file);
+                let text = fs::read_to_string(path)?;
+                if text.len() > MAX_WORKER_EDIT_BYTES {
+                    return Err(LogicError::ProposedChangeTooLarge {
+                        card_id: plan.card_id.clone(),
+                        file,
+                        bytes: text.len(),
+                    });
+                }
+                Ok(AgentLinkedFile { file, text })
+            })
+            .collect()
+    }
+
+    pub fn apply_agent_file_edits(
+        &self,
+        project: &mut LogicProject,
+        plan: &AgentWorkPlan,
+        mut input: AgentRunInput,
+        edits: Vec<AgentFileEdit>,
+    ) -> Result<AgentRun, LogicError> {
+        let card = self.running_card_for_plan(project, plan)?;
+        let linked_files = safe_normalized_files(card)?;
+        let worktree_root = self.worktree_root(plan)?;
+        let pending_edits =
+            validate_agent_file_edits(&card.id, &worktree_root, &linked_files, edits)?;
+
+        for edit in &pending_edits {
+            fs::write(&edit.path, &edit.new_text)?;
+        }
+
+        input.status = AgentRunStatus::ReadyForReview;
+        input.proposed_changes = pending_edits
+            .into_iter()
+            .map(|edit| ProposedFileChange {
+                file: edit.file,
+                summary: edit.summary,
+                status: "proposed".to_string(),
+                hunks: edit.hunks,
+            })
+            .collect();
+
+        self.record_agent_run(project, plan, input)
+    }
+
+    pub fn finalize_agent_review(
+        &self,
+        project: &mut LogicProject,
+        card_id: &str,
+        disposition: AgentReviewDisposition,
+        reviewed_at: impl Into<String>,
+    ) -> Result<AgentRun, LogicError> {
+        let card = project
+            .card_mut(card_id)
+            .ok_or_else(|| LogicError::CardNotFound(card_id.to_string()))?;
+        if card.status != CardStatus::ReadyToMerge {
+            return Err(LogicError::CardNotReadyToMerge {
+                card_id: card_id.to_string(),
+                status: card.status,
+            });
+        }
+
+        let run = card
+            .agent_runs
+            .last_mut()
+            .filter(|run| run.status == AgentRunStatus::ReadyForReview)
+            .ok_or_else(|| LogicError::NoReviewableAgentRun {
+                card_id: card_id.to_string(),
+            })?;
+        let reviewed_at = reviewed_at.into();
+
+        match disposition {
+            AgentReviewDisposition::Merged => {
+                run.status = AgentRunStatus::Applied;
+                for change in &mut run.proposed_changes {
+                    change.status = "applied".to_string();
+                    for hunk in &mut change.hunks {
+                        hunk.status = "applied".to_string();
+                    }
+                }
+                run.diagnostics.push(AgentDiagnostic {
+                    level: "info".to_string(),
+                    message: format!("Reviewer marked this run merged at {reviewed_at}."),
+                });
+                card.status = CardStatus::Merged;
+                card.implementation_branch = None;
+                card.worktree_path = None;
+                card.conflicts.clear();
+            }
+            AgentReviewDisposition::Rejected => {
+                run.status = AgentRunStatus::Rejected;
+                for change in &mut run.proposed_changes {
+                    change.status = "rejected".to_string();
+                    for hunk in &mut change.hunks {
+                        hunk.status = "rejected".to_string();
+                    }
+                }
+                run.diagnostics.push(AgentDiagnostic {
+                    level: "warn".to_string(),
+                    message: format!(
+                        "Reviewer rejected this run at {reviewed_at}; worktree left intact for inspection."
+                    ),
+                });
+                card.status = CardStatus::Blocked;
+            }
+        }
+
+        Ok(run.clone())
+    }
+
+    pub fn cancel_agent_run(
+        &self,
+        project: &mut LogicProject,
+        card_id: &str,
+        cancelled_at: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<AgentRun, LogicError> {
+        let card = project
+            .card_mut(card_id)
+            .ok_or_else(|| LogicError::CardNotFound(card_id.to_string()))?;
+        if card.status != CardStatus::Running {
+            return Err(LogicError::CardNotRunning {
+                card_id: card_id.to_string(),
+                status: card.status,
+            });
+        }
+
+        let cancelled_at = cancelled_at.into();
+        let note = {
+            let reason = reason.into();
+            if reason.trim().is_empty() {
+                "Reviewer cancelled the running agent before reviewable edits were produced."
+                    .to_string()
+            } else {
+                reason
+            }
+        };
+        let run = AgentRun {
+            id: format!("run-{}-{}", slugify(&card.id), card.agent_runs.len() + 1),
+            at: cancelled_at.clone(),
+            model: "system".to_string(),
+            mode: "manual_cancel".to_string(),
+            status: AgentRunStatus::Cancelled,
+            prompt_summary: String::new(),
+            note,
+            started_at: None,
+            finished_at: Some(cancelled_at.clone()),
+            branch: card.implementation_branch.clone(),
+            worktree_path: card.worktree_path.clone(),
+            diagnostics: vec![AgentDiagnostic {
+                level: "warn".to_string(),
+                message: format!(
+                    "Agent run cancelled at {cancelled_at}; branch and worktree metadata were preserved for inspection."
+                ),
+            }],
+            proposed_changes: Vec::new(),
+            preflight_conflicts: card.conflicts.clone(),
+        };
+
+        card.agent_runs.push(run.clone());
+        card.status = CardStatus::Blocked;
+        Ok(run)
+    }
+
+    pub fn reset_agent_work(
+        &self,
+        project: &mut LogicProject,
+        card_id: &str,
+        reset_at: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Result<AgentRun, LogicError> {
+        let card = project
+            .card_mut(card_id)
+            .ok_or_else(|| LogicError::CardNotFound(card_id.to_string()))?;
+        if card.status != CardStatus::Blocked {
+            return Err(LogicError::CardNotResettable {
+                card_id: card_id.to_string(),
+                status: card.status,
+            });
+        }
+
+        let latest_run = card
+            .agent_runs
+            .last()
+            .filter(|run| {
+                matches!(
+                    run.status,
+                    AgentRunStatus::Rejected | AgentRunStatus::Failed | AgentRunStatus::Cancelled
+                )
+            })
+            .ok_or_else(|| LogicError::NoResettableAgentRun {
+                card_id: card_id.to_string(),
+            })?;
+        let previous_branch = card
+            .implementation_branch
+            .clone()
+            .or_else(|| latest_run.branch.clone());
+        let previous_worktree = card
+            .worktree_path
+            .clone()
+            .or_else(|| latest_run.worktree_path.clone());
+        let reset_at = reset_at.into();
+        let note = {
+            let reason = reason.into();
+            if reason.trim().is_empty() {
+                "Reviewer reset this blocked agent work for a clean retry.".to_string()
+            } else {
+                reason
+            }
+        };
+        let run = AgentRun {
+            id: format!("run-{}-{}", slugify(&card.id), card.agent_runs.len() + 1),
+            at: reset_at.clone(),
+            model: "system".to_string(),
+            mode: "manual_reset".to_string(),
+            status: AgentRunStatus::Abandoned,
+            prompt_summary: String::new(),
+            note,
+            started_at: None,
+            finished_at: Some(reset_at.clone()),
+            branch: previous_branch.clone(),
+            worktree_path: previous_worktree.clone(),
+            diagnostics: vec![AgentDiagnostic {
+                level: "info".to_string(),
+                message: format!(
+                    "Agent work reset at {reset_at}; previous branch/worktree metadata was preserved in this audit run."
+                ),
+            }],
+            proposed_changes: Vec::new(),
+            preflight_conflicts: card.conflicts.clone(),
+        };
+
+        card.agent_runs.push(run.clone());
+        card.status = CardStatus::Ready;
+        card.implementation_branch = None;
+        card.worktree_path = None;
+        card.conflicts.clear();
+        Ok(run)
+    }
+
+    fn running_card_for_plan<'a>(
+        &self,
+        project: &'a LogicProject,
+        plan: &AgentWorkPlan,
+    ) -> Result<&'a LogicCard, LogicError> {
+        let card = project
+            .card(&plan.card_id)
+            .ok_or_else(|| LogicError::CardNotFound(plan.card_id.clone()))?;
+        if card.status != CardStatus::Running {
+            return Err(LogicError::CardNotRunning {
+                card_id: plan.card_id.clone(),
+                status: card.status,
+            });
+        }
+        if card.implementation_branch.as_deref() != Some(plan.branch.as_str())
+            || card.worktree_path.as_deref() != Some(plan.worktree_path.as_str())
+        {
+            return Err(LogicError::AgentPlanMismatch {
+                card_id: plan.card_id.clone(),
+            });
+        }
+        Ok(card)
+    }
+
+    fn worktree_root(&self, plan: &AgentWorkPlan) -> Result<PathBuf, LogicError> {
+        let root = PathBuf::from(&plan.worktree_path);
+        let worktree_root = if root.is_absolute() {
+            root
+        } else {
+            self.project_root.join(root)
+        };
+        let canonical_worktree = fs::canonicalize(&worktree_root)?;
+        let canonical_scope = fs::canonicalize(self.project_root.join(WORKTREE_DIR))?;
+        if !canonical_worktree.starts_with(&canonical_scope) {
+            return Err(LogicError::InvalidWorktreePath {
+                card_id: plan.card_id.clone(),
+                worktree_path: plan.worktree_path.clone(),
+            });
+        }
+        Ok(canonical_worktree)
     }
 }
 
@@ -550,13 +1086,39 @@ fn render_card(out: &mut String, card: &LogicCard) {
     }
     if let Some(run) = card.agent_runs.last() {
         out.push_str("**Latest agent run:**\n\n");
-        out.push_str(&format!("- Model: `{}` ({})\n", run.model, run.mode));
+        out.push_str(&format!(
+            "- Model: `{}` ({}, {})\n",
+            run.model,
+            run.mode,
+            agent_run_status_label(run.status)
+        ));
+        if let Some(branch) = &run.branch {
+            out.push_str(&format!("- Branch: `{branch}`\n"));
+        }
+        if let Some(worktree_path) = &run.worktree_path {
+            out.push_str(&format!("- Worktree: `{worktree_path}`\n"));
+        }
+        if !run.prompt_summary.trim().is_empty() {
+            out.push_str(&format!("- Prompt: {}\n", run.prompt_summary.replace('\n', " ")));
+        }
         out.push_str(&format!("- Note: {}\n", run.note.replace('\n', " ")));
+        for diagnostic in &run.diagnostics {
+            out.push_str(&format!("- Diagnostic {}: {}\n", diagnostic.level, diagnostic.message));
+        }
         for change in &run.proposed_changes {
             out.push_str(&format!(
-                "- Proposed `{}`: {}\n",
-                change.file, change.summary
+                "- Proposed `{}` ({}, {} hunk(s)): {}\n",
+                change.file,
+                change.status,
+                change.hunks.len(),
+                change.summary
             ));
+            for hunk in &change.hunks {
+                out.push_str(&format!(
+                    "  - Hunk `{}` ({}): {}\n",
+                    hunk.id, hunk.status, hunk.summary
+                ));
+            }
         }
         out.push('\n');
     }
@@ -772,15 +1334,325 @@ fn conflict_label(kind: ConflictKind) -> &'static str {
     }
 }
 
+fn agent_run_status_label(status: AgentRunStatus) -> &'static str {
+    match status {
+        AgentRunStatus::Started => "started",
+        AgentRunStatus::NotesOnly => "notes_only",
+        AgentRunStatus::ReadyForReview => "ready_for_review",
+        AgentRunStatus::Applied => "applied",
+        AgentRunStatus::Rejected => "rejected",
+        AgentRunStatus::Failed => "failed",
+        AgentRunStatus::Cancelled => "cancelled",
+        AgentRunStatus::Abandoned => "abandoned",
+    }
+}
+
 fn normalized_files(files: &[String]) -> Vec<String> {
     let mut out = files
         .iter()
-        .map(|file| file.trim().replace('\\', "/"))
+        .map(|file| normalize_file(file))
         .filter(|file| !file.is_empty())
         .collect::<Vec<_>>();
     out.sort();
     out.dedup();
     out
+}
+
+fn normalize_file(file: &str) -> String {
+    file.trim().replace('\\', "/")
+}
+
+fn safe_normalized_files(card: &LogicCard) -> Result<Vec<String>, LogicError> {
+    let files = normalized_files(&card.linked_files);
+    for file in &files {
+        if !is_safe_project_file(file) {
+            return Err(LogicError::UnsafeLinkedFile {
+                card_id: card.id.clone(),
+                file: file.clone(),
+            });
+        }
+    }
+    Ok(files)
+}
+
+fn is_safe_project_file(file: &str) -> bool {
+    if file.is_empty() || file.starts_with('/') || file.starts_with('~') {
+        return false;
+    }
+    !file
+        .split('/')
+        .any(|part| part.is_empty() || part == "." || part == "..")
+}
+
+fn proposed_changes_for_card(
+    card: &LogicCard,
+    preflight_conflicts: &[ConflictRecord],
+) -> Vec<ProposedFileChange> {
+    let conflict_files = preflight_conflicts
+        .iter()
+        .filter_map(|conflict| conflict.file.as_deref())
+        .collect::<BTreeSet<_>>();
+    let files = normalized_files(&card.linked_files);
+    if files.is_empty() {
+        return vec![ProposedFileChange {
+            file: "(new file TBD)".to_string(),
+            summary: "Worker should choose a file after reading the project structure.".to_string(),
+            status: "needs_scope".to_string(),
+            hunks: Vec::new(),
+        }];
+    }
+    files
+        .into_iter()
+        .map(|file| {
+            let needs_merge_agent = conflict_files.contains(file.as_str());
+            ProposedFileChange {
+                summary: if needs_merge_agent {
+                    "Review with merge agent because another active card links this file.".to_string()
+                } else {
+                    format!(
+                        "Implementation note recorded for {}; code edits still require the structured patch worker.",
+                        card.title
+                    )
+                },
+                status: if needs_merge_agent {
+                    "needs_merge_agent".to_string()
+                } else {
+                    "notes_only".to_string()
+                },
+                file,
+                hunks: Vec::new(),
+            }
+        })
+        .collect()
+}
+
+fn validate_proposed_changes(
+    card_id: &str,
+    linked_files: &[String],
+    proposed_changes: &[ProposedFileChange],
+) -> Result<(), LogicError> {
+    let linked = linked_files.iter().collect::<BTreeSet<_>>();
+    for change in proposed_changes {
+        if change.file == "(new file TBD)" {
+            continue;
+        }
+        if !is_safe_project_file(&change.file) || !linked.contains(&change.file) {
+            return Err(LogicError::ProposedChangeOutOfScope {
+                card_id: card_id.to_string(),
+                file: change.file.clone(),
+            });
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug)]
+struct PendingAgentFileEdit {
+    file: String,
+    path: PathBuf,
+    summary: String,
+    new_text: String,
+    hunks: Vec<ProposedChangeHunk>,
+}
+
+fn validate_agent_file_edits(
+    card_id: &str,
+    worktree_root: &Path,
+    linked_files: &[String],
+    edits: Vec<AgentFileEdit>,
+) -> Result<Vec<PendingAgentFileEdit>, LogicError> {
+    if edits.is_empty() {
+        return Err(LogicError::NoAgentFileEdits {
+            card_id: card_id.to_string(),
+        });
+    }
+
+    let linked = linked_files.iter().collect::<BTreeSet<_>>();
+    let mut pending = Vec::new();
+    let mut seen = BTreeSet::new();
+
+    for edit in edits {
+        let file = normalize_file(&edit.file);
+        if !is_safe_project_file(&file) || !linked.contains(&file) || !seen.insert(file.clone()) {
+            return Err(LogicError::ProposedChangeOutOfScope {
+                card_id: card_id.to_string(),
+                file,
+            });
+        }
+        if edit.expected_text == edit.new_text {
+            return Err(LogicError::NoAgentFileEdits {
+                card_id: card_id.to_string(),
+            });
+        }
+        let bytes = edit.new_text.len();
+        if bytes > MAX_WORKER_EDIT_BYTES {
+            return Err(LogicError::ProposedChangeTooLarge {
+                card_id: card_id.to_string(),
+                file,
+                bytes,
+            });
+        }
+
+        let path = worktree_root.join(&file);
+        let current_text = fs::read_to_string(&path)?;
+        if current_text != edit.expected_text {
+            return Err(LogicError::StaleLinkedFile {
+                card_id: card_id.to_string(),
+                file,
+            });
+        }
+
+        pending.push(PendingAgentFileEdit {
+            hunks: compute_review_hunks(&file, &edit.expected_text, &edit.new_text),
+            file,
+            path,
+            summary: if edit.summary.trim().is_empty() {
+                "Structured worker edit applied in the card worktree.".to_string()
+            } else {
+                edit.summary
+            },
+            new_text: edit.new_text,
+        });
+    }
+
+    Ok(pending)
+}
+
+fn compute_review_hunks(file: &str, old_text: &str, new_text: &str) -> Vec<ProposedChangeHunk> {
+    if old_text == new_text {
+        return Vec::new();
+    }
+    let old_lines = split_review_lines(old_text);
+    let new_lines = split_review_lines(new_text);
+    if old_lines.len().saturating_mul(new_lines.len()) > MAX_HUNK_LCS_CELLS {
+        return vec![review_hunk(file, 1, 0, old_lines.len(), 0, new_lines.len())];
+    }
+
+    let dp = build_lcs_table(&old_lines, &new_lines);
+    let mut hunks = Vec::new();
+    let mut old_chunk: Vec<&str> = Vec::new();
+    let mut new_chunk: Vec<&str> = Vec::new();
+    let mut old_start = 0;
+    let mut new_start = 0;
+    let mut old_index = 0;
+    let mut new_index = 0;
+
+    while old_index < old_lines.len() || new_index < new_lines.len() {
+        if old_index < old_lines.len()
+            && new_index < new_lines.len()
+            && old_lines[old_index] == new_lines[new_index]
+        {
+            flush_review_hunk(
+                file,
+                &mut hunks,
+                old_start,
+                new_start,
+                &mut old_chunk,
+                &mut new_chunk,
+            );
+            old_index += 1;
+            new_index += 1;
+            continue;
+        }
+
+        if old_chunk.is_empty() && new_chunk.is_empty() {
+            old_start = old_index;
+            new_start = new_index;
+        }
+
+        if new_index < new_lines.len()
+            && (old_index == old_lines.len()
+                || dp[old_index][new_index + 1] >= dp[old_index + 1][new_index])
+        {
+            new_chunk.push(new_lines[new_index].as_str());
+            new_index += 1;
+        } else if old_index < old_lines.len() {
+            old_chunk.push(old_lines[old_index].as_str());
+            old_index += 1;
+        }
+    }
+
+    flush_review_hunk(
+        file,
+        &mut hunks,
+        old_start,
+        new_start,
+        &mut old_chunk,
+        &mut new_chunk,
+    );
+    hunks
+}
+
+fn split_review_lines(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        Vec::new()
+    } else {
+        text.replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .split('\n')
+            .map(|line| line.to_string())
+            .collect()
+    }
+}
+
+fn build_lcs_table(old_lines: &[String], new_lines: &[String]) -> Vec<Vec<usize>> {
+    let mut dp = vec![vec![0; new_lines.len() + 1]; old_lines.len() + 1];
+    for old_index in (0..old_lines.len()).rev() {
+        for new_index in (0..new_lines.len()).rev() {
+            dp[old_index][new_index] = if old_lines[old_index] == new_lines[new_index] {
+                dp[old_index + 1][new_index + 1] + 1
+            } else {
+                dp[old_index + 1][new_index].max(dp[old_index][new_index + 1])
+            };
+        }
+    }
+    dp
+}
+
+fn flush_review_hunk(
+    file: &str,
+    hunks: &mut Vec<ProposedChangeHunk>,
+    old_start: usize,
+    new_start: usize,
+    old_chunk: &mut Vec<&str>,
+    new_chunk: &mut Vec<&str>,
+) {
+    if old_chunk.is_empty() && new_chunk.is_empty() {
+        return;
+    }
+    hunks.push(review_hunk(
+        file,
+        hunks.len() + 1,
+        old_start,
+        old_chunk.len(),
+        new_start,
+        new_chunk.len(),
+    ));
+    old_chunk.clear();
+    new_chunk.clear();
+}
+
+fn review_hunk(
+    file: &str,
+    index: usize,
+    old_start: usize,
+    old_line_count: usize,
+    new_start: usize,
+    new_line_count: usize,
+) -> ProposedChangeHunk {
+    let old_start_line = old_start + 1;
+    let new_start_line = new_start + 1;
+    ProposedChangeHunk {
+        id: format!("{}-hunk-{index}", slugify(file)),
+        old_start_line,
+        old_line_count,
+        new_start_line,
+        new_line_count,
+        status: "proposed".to_string(),
+        summary: format!(
+            "-{old_line_count} +{new_line_count} at old:{old_start_line} new:{new_start_line}"
+        ),
+    }
 }
 
 pub fn slugify(input: &str) -> String {
@@ -846,6 +1718,51 @@ mod tests {
         }
     }
 
+    fn run_input(status: AgentRunStatus) -> AgentRunInput {
+        AgentRunInput {
+            id: Some("run-test".to_string()),
+            model: "gemma3:4b".to_string(),
+            mode: "model_note".to_string(),
+            status,
+            prompt_summary: "Card summary, linked files, dependencies, and conflicts.".to_string(),
+            note: "Implementation intent recorded by the local model.".to_string(),
+            started_at: Some("2026-05-08T00:00:00Z".to_string()),
+            finished_at: Some("2026-05-08T00:00:01Z".to_string()),
+            diagnostics: vec![AgentDiagnostic {
+                level: "info".to_string(),
+                message: "No structured patch was applied.".to_string(),
+            }],
+            proposed_changes: Vec::new(),
+        }
+    }
+
+    fn reviewable_run_input_with_hunk() -> AgentRunInput {
+        let mut input = run_input(AgentRunStatus::ReadyForReview);
+        input.proposed_changes = vec![ProposedFileChange {
+            file: "src/app.ts".to_string(),
+            summary: "Review one changed block.".to_string(),
+            status: "proposed".to_string(),
+            hunks: vec![ProposedChangeHunk {
+                id: "src-app-ts-hunk-1".to_string(),
+                old_start_line: 1,
+                old_line_count: 1,
+                new_start_line: 1,
+                new_line_count: 1,
+                status: "proposed".to_string(),
+                summary: "-1 +1 at old:1 new:1".to_string(),
+            }],
+        }];
+        input
+    }
+
+    fn unique_test_root(name: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("open-code-logic-{name}-{}-{nanos}", std::process::id()))
+    }
+
     #[test]
     fn branch_names_are_safe_and_predictable() {
         let c = card("card-7", "Voice UI: Start/Stop!", CardStatus::Ready, &[]);
@@ -873,6 +1790,23 @@ mod tests {
         assert!(plan
             .worktree_path
             .ends_with(".open-code/worktrees/card-unsafe-id-voice-ui"));
+    }
+
+    #[test]
+    fn coordinator_rejects_unsafe_linked_file_paths() {
+        let p = project(
+            vec![card(
+                "card-unsafe",
+                "Unsafe Linked File",
+                CardStatus::Ready,
+                &["../secrets.env"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+
+        let err = coordinator.plan_card_work(&p, "card-unsafe").unwrap_err();
+        assert!(matches!(err, LogicError::UnsafeLinkedFile { .. }));
     }
 
     #[test]
@@ -988,6 +1922,760 @@ mod tests {
         assert_eq!(updated.implementation_branch.as_deref(), Some(plan.branch.as_str()));
         assert_eq!(updated.conflicts.len(), 1);
         assert_eq!(updated.conflicts[0].kind, ConflictKind::CodeOverlap);
+    }
+
+    #[test]
+    fn record_agent_run_persists_auditable_notes_without_marking_ready_to_merge() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let run = coordinator
+            .record_agent_run(&mut p, &plan, run_input(AgentRunStatus::NotesOnly))
+            .unwrap();
+        let updated = p.card("logic-a").unwrap();
+
+        assert_eq!(updated.status, CardStatus::Running);
+        assert_eq!(run.status, AgentRunStatus::NotesOnly);
+        assert_eq!(run.branch.as_deref(), Some(plan.branch.as_str()));
+        assert_eq!(run.worktree_path.as_deref(), Some(plan.worktree_path.as_str()));
+        assert_eq!(run.proposed_changes.len(), 1);
+        assert_eq!(run.proposed_changes[0].file, "src/app.ts");
+        assert_eq!(run.proposed_changes[0].status, "notes_only");
+        assert_eq!(updated.agent_runs.len(), 1);
+    }
+
+    #[test]
+    fn ready_for_review_agent_run_moves_card_to_ready_to_merge() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        coordinator
+            .record_agent_run(&mut p, &plan, run_input(AgentRunStatus::ReadyForReview))
+            .unwrap();
+
+        assert_eq!(p.card("logic-a").unwrap().status, CardStatus::ReadyToMerge);
+    }
+
+    #[test]
+    fn merged_review_closeout_marks_card_and_changes_applied() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        coordinator
+            .record_agent_run(&mut p, &plan, reviewable_run_input_with_hunk())
+            .unwrap();
+
+        let run = coordinator
+            .finalize_agent_review(
+                &mut p,
+                "logic-a",
+                AgentReviewDisposition::Merged,
+                "2026-05-08T01:00:00Z",
+            )
+            .unwrap();
+        let updated = p.card("logic-a").unwrap();
+
+        assert_eq!(updated.status, CardStatus::Merged);
+        assert_eq!(updated.implementation_branch, None);
+        assert_eq!(updated.worktree_path, None);
+        assert_eq!(run.status, AgentRunStatus::Applied);
+        assert_eq!(run.branch.as_deref(), Some(plan.branch.as_str()));
+        assert_eq!(run.worktree_path.as_deref(), Some(plan.worktree_path.as_str()));
+        assert_eq!(run.proposed_changes[0].status, "applied");
+        assert_eq!(run.proposed_changes[0].hunks[0].status, "applied");
+        assert!(run
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("marked this run merged")));
+    }
+
+    #[test]
+    fn rejected_review_closeout_blocks_card_without_losing_worktree_metadata() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        coordinator
+            .record_agent_run(&mut p, &plan, reviewable_run_input_with_hunk())
+            .unwrap();
+
+        let run = coordinator
+            .finalize_agent_review(
+                &mut p,
+                "logic-a",
+                AgentReviewDisposition::Rejected,
+                "2026-05-08T01:00:00Z",
+            )
+            .unwrap();
+        let updated = p.card("logic-a").unwrap();
+
+        assert_eq!(updated.status, CardStatus::Blocked);
+        assert_eq!(updated.implementation_branch.as_deref(), Some(plan.branch.as_str()));
+        assert_eq!(updated.worktree_path.as_deref(), Some(plan.worktree_path.as_str()));
+        assert_eq!(run.status, AgentRunStatus::Rejected);
+        assert_eq!(run.proposed_changes[0].status, "rejected");
+        assert_eq!(run.proposed_changes[0].hunks[0].status, "rejected");
+        assert!(run
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("left intact")));
+    }
+
+    #[test]
+    fn review_closeout_requires_latest_reviewable_run() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        coordinator
+            .record_agent_run(&mut p, &plan, run_input(AgentRunStatus::NotesOnly))
+            .unwrap();
+        p.card_mut("logic-a").unwrap().status = CardStatus::ReadyToMerge;
+
+        let err = coordinator
+            .finalize_agent_review(
+                &mut p,
+                "logic-a",
+                AgentReviewDisposition::Merged,
+                "2026-05-08T01:00:00Z",
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::NoReviewableAgentRun { .. }));
+    }
+
+    #[test]
+    fn cancel_agent_run_blocks_card_and_preserves_worktree_metadata() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let run = coordinator
+            .cancel_agent_run(
+                &mut p,
+                "logic-a",
+                "2026-05-08T02:00:00Z",
+                "User stopped the worker before review.",
+            )
+            .unwrap();
+        let updated = p.card("logic-a").unwrap();
+
+        assert_eq!(updated.status, CardStatus::Blocked);
+        assert_eq!(updated.implementation_branch.as_deref(), Some(plan.branch.as_str()));
+        assert_eq!(updated.worktree_path.as_deref(), Some(plan.worktree_path.as_str()));
+        assert_eq!(run.status, AgentRunStatus::Cancelled);
+        assert_eq!(run.mode, "manual_cancel");
+        assert_eq!(run.branch.as_deref(), Some(plan.branch.as_str()));
+        assert_eq!(run.worktree_path.as_deref(), Some(plan.worktree_path.as_str()));
+        assert!(run.proposed_changes.is_empty());
+        assert!(run
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("preserved for inspection")));
+    }
+
+    #[test]
+    fn cancel_agent_run_requires_running_card() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+
+        let err = coordinator
+            .cancel_agent_run(
+                &mut p,
+                "logic-a",
+                "2026-05-08T02:00:00Z",
+                "User stopped the worker before review.",
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::CardNotRunning { .. }));
+        assert!(p.card("logic-a").unwrap().agent_runs.is_empty());
+    }
+
+    #[test]
+    fn reset_agent_work_returns_blocked_terminal_run_to_ready_for_retry() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        coordinator
+            .cancel_agent_run(
+                &mut p,
+                "logic-a",
+                "2026-05-08T02:00:00Z",
+                "User stopped the worker before review.",
+            )
+            .unwrap();
+
+        let run = coordinator
+            .reset_agent_work(
+                &mut p,
+                "logic-a",
+                "2026-05-08T02:05:00Z",
+                "Clean retry requested after cancellation.",
+            )
+            .unwrap();
+        let updated = p.card("logic-a").unwrap();
+
+        assert_eq!(updated.status, CardStatus::Ready);
+        assert_eq!(updated.implementation_branch, None);
+        assert_eq!(updated.worktree_path, None);
+        assert!(updated.conflicts.is_empty());
+        assert_eq!(run.status, AgentRunStatus::Abandoned);
+        assert_eq!(run.mode, "manual_reset");
+        assert_eq!(run.branch.as_deref(), Some(plan.branch.as_str()));
+        assert_eq!(run.worktree_path.as_deref(), Some(plan.worktree_path.as_str()));
+        assert_eq!(updated.agent_runs.len(), 2);
+    }
+
+    #[test]
+    fn reset_agent_work_accepts_rejected_and_failed_terminal_runs() {
+        let coordinator = AgentCoordinator::new("/repo");
+
+        let mut rejected = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let rejected_plan = coordinator.plan_card_work(&rejected, "logic-a").unwrap();
+        coordinator.record_start(&mut rejected, &rejected_plan).unwrap();
+        coordinator
+            .record_agent_run(
+                &mut rejected,
+                &rejected_plan,
+                run_input(AgentRunStatus::ReadyForReview),
+            )
+            .unwrap();
+        coordinator
+            .finalize_agent_review(
+                &mut rejected,
+                "logic-a",
+                AgentReviewDisposition::Rejected,
+                "2026-05-08T02:00:00Z",
+            )
+            .unwrap();
+
+        let rejected_reset = coordinator
+            .reset_agent_work(
+                &mut rejected,
+                "logic-a",
+                "2026-05-08T02:05:00Z",
+                "Retry requested after rejecting the run.",
+            )
+            .unwrap();
+
+        let rejected_card = rejected.card("logic-a").unwrap();
+        assert_eq!(rejected_card.status, CardStatus::Ready);
+        assert_eq!(rejected_card.implementation_branch, None);
+        assert_eq!(rejected_card.worktree_path, None);
+        assert_eq!(rejected_reset.status, AgentRunStatus::Abandoned);
+        assert_eq!(
+            rejected_reset.branch.as_deref(),
+            Some(rejected_plan.branch.as_str())
+        );
+        assert_eq!(
+            rejected_reset.worktree_path.as_deref(),
+            Some(rejected_plan.worktree_path.as_str())
+        );
+
+        let mut failed = project(
+            vec![card(
+                "logic-b",
+                "Logic B",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let failed_plan = coordinator.plan_card_work(&failed, "logic-b").unwrap();
+        coordinator.record_start(&mut failed, &failed_plan).unwrap();
+        coordinator
+            .record_agent_run(&mut failed, &failed_plan, run_input(AgentRunStatus::Failed))
+            .unwrap();
+
+        let failed_reset = coordinator
+            .reset_agent_work(
+                &mut failed,
+                "logic-b",
+                "2026-05-08T02:10:00Z",
+                "Retry requested after a failed run.",
+            )
+            .unwrap();
+
+        let failed_card = failed.card("logic-b").unwrap();
+        assert_eq!(failed_card.status, CardStatus::Ready);
+        assert_eq!(failed_card.implementation_branch, None);
+        assert_eq!(failed_card.worktree_path, None);
+        assert_eq!(failed_reset.status, AgentRunStatus::Abandoned);
+        assert_eq!(
+            failed_reset.branch.as_deref(),
+            Some(failed_plan.branch.as_str())
+        );
+        assert_eq!(
+            failed_reset.worktree_path.as_deref(),
+            Some(failed_plan.worktree_path.as_str())
+        );
+    }
+
+    #[test]
+    fn reset_agent_work_requires_blocked_card_with_terminal_agent_run() {
+        let mut ready = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let status_err = coordinator
+            .reset_agent_work(
+                &mut ready,
+                "logic-a",
+                "2026-05-08T02:05:00Z",
+                "Retry requested.",
+            )
+            .unwrap_err();
+        assert!(matches!(status_err, LogicError::CardNotResettable { .. }));
+
+        let mut blocked = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Blocked,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let run_err = coordinator
+            .reset_agent_work(
+                &mut blocked,
+                "logic-a",
+                "2026-05-08T02:05:00Z",
+                "Retry requested.",
+            )
+            .unwrap_err();
+        assert!(matches!(run_err, LogicError::NoResettableAgentRun { .. }));
+    }
+
+    #[test]
+    fn apply_agent_file_edits_writes_linked_file_and_records_reviewable_run() {
+        let root = unique_test_root("apply-edit");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        let target = PathBuf::from(&plan.worktree_path).join("src/app.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "old implementation\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let run = coordinator
+            .apply_agent_file_edits(
+                &mut p,
+                &plan,
+                run_input(AgentRunStatus::NotesOnly),
+                vec![AgentFileEdit {
+                    file: "src/app.ts".to_string(),
+                    expected_text: "old implementation\n".to_string(),
+                    new_text: "new implementation\n".to_string(),
+                    summary: "Replace the placeholder implementation.".to_string(),
+                }],
+            )
+            .unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "new implementation\n"
+        );
+        assert_eq!(p.card("logic-a").unwrap().status, CardStatus::ReadyToMerge);
+        assert_eq!(run.status, AgentRunStatus::ReadyForReview);
+        assert_eq!(run.proposed_changes[0].file, "src/app.ts");
+        assert_eq!(run.proposed_changes[0].status, "proposed");
+        assert_eq!(run.proposed_changes[0].hunks.len(), 1);
+        assert_eq!(run.proposed_changes[0].hunks[0].id, "src-app-ts-hunk-1");
+        assert_eq!(run.proposed_changes[0].hunks[0].old_start_line, 1);
+        assert_eq!(run.proposed_changes[0].hunks[0].old_line_count, 1);
+        assert_eq!(run.proposed_changes[0].hunks[0].new_start_line, 1);
+        assert_eq!(run.proposed_changes[0].hunks[0].new_line_count, 1);
+        assert_eq!(run.proposed_changes[0].hunks[0].status, "proposed");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_agent_file_edits_records_multiple_review_hunks() {
+        let root = unique_test_root("multi-hunk-edit");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        let target = PathBuf::from(&plan.worktree_path).join("src/app.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "a\nb\nc\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let run = coordinator
+            .apply_agent_file_edits(
+                &mut p,
+                &plan,
+                run_input(AgentRunStatus::NotesOnly),
+                vec![AgentFileEdit {
+                    file: "src/app.ts".to_string(),
+                    expected_text: "a\nb\nc\n".to_string(),
+                    new_text: "A\nb\nc\nd\n".to_string(),
+                    summary: "Change the heading and append a line.".to_string(),
+                }],
+            )
+            .unwrap();
+
+        let hunks = &run.proposed_changes[0].hunks;
+        assert_eq!(hunks.len(), 2);
+        assert_eq!(hunks[0].summary, "-1 +1 at old:1 new:1");
+        assert_eq!(hunks[1].summary, "-0 +1 at old:4 new:4");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_agent_linked_files_returns_exact_worktree_text() {
+        let root = unique_test_root("read-linked-files");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        let target = PathBuf::from(&plan.worktree_path).join("src/app.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "current implementation\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let files = coordinator.read_agent_linked_files(&p, &plan).unwrap();
+
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].file, "src/app.ts");
+        assert_eq!(files[0].text, "current implementation\n");
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_agent_file_edits_rejects_stale_files_without_writing() {
+        let root = unique_test_root("stale-edit");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        let target = PathBuf::from(&plan.worktree_path).join("src/app.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "changed by user\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let err = coordinator
+            .apply_agent_file_edits(
+                &mut p,
+                &plan,
+                run_input(AgentRunStatus::NotesOnly),
+                vec![AgentFileEdit {
+                    file: "src/app.ts".to_string(),
+                    expected_text: "old implementation\n".to_string(),
+                    new_text: "new implementation\n".to_string(),
+                    summary: "Replace the placeholder implementation.".to_string(),
+                }],
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::StaleLinkedFile { .. }));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "changed by user\n"
+        );
+        assert_eq!(p.card("logic-a").unwrap().status, CardStatus::Running);
+        assert!(p.card("logic-a").unwrap().agent_runs.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_agent_file_edits_rejects_noop_edits_without_marking_reviewable() {
+        let root = unique_test_root("noop-edit");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        let target = PathBuf::from(&plan.worktree_path).join("src/app.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "unchanged implementation\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let err = coordinator
+            .apply_agent_file_edits(
+                &mut p,
+                &plan,
+                run_input(AgentRunStatus::NotesOnly),
+                vec![AgentFileEdit {
+                    file: "src/app.ts".to_string(),
+                    expected_text: "unchanged implementation\n".to_string(),
+                    new_text: "unchanged implementation\n".to_string(),
+                    summary: "No real edit.".to_string(),
+                }],
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::NoAgentFileEdits { .. }));
+        assert_eq!(p.card("logic-a").unwrap().status, CardStatus::Running);
+        assert!(p.card("logic-a").unwrap().agent_runs.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_agent_file_edits_rejects_unlinked_files() {
+        let root = unique_test_root("scope-edit");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        let target = PathBuf::from(&plan.worktree_path).join("src/app.ts");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, "old implementation\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+
+        let err = coordinator
+            .apply_agent_file_edits(
+                &mut p,
+                &plan,
+                run_input(AgentRunStatus::NotesOnly),
+                vec![AgentFileEdit {
+                    file: "src/other.ts".to_string(),
+                    expected_text: "old implementation\n".to_string(),
+                    new_text: "new implementation\n".to_string(),
+                    summary: "Attempt an unlinked edit.".to_string(),
+                }],
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::ProposedChangeOutOfScope { .. }));
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "old implementation\n"
+        );
+        assert!(p.card("logic-a").unwrap().agent_runs.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_agent_file_edits_rejects_worktrees_outside_project_scope() {
+        let root = unique_test_root("worktree-scope");
+        let outside = unique_test_root("outside-worktree");
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new(&root);
+        let mut plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        std::fs::create_dir_all(root.join(WORKTREE_DIR)).unwrap();
+        let outside_target = outside.join("src/app.ts");
+        std::fs::create_dir_all(outside_target.parent().unwrap()).unwrap();
+        std::fs::write(&outside_target, "outside worktree\n").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        plan.worktree_path = outside.to_string_lossy().to_string();
+        p.card_mut("logic-a").unwrap().worktree_path = Some(plan.worktree_path.clone());
+
+        let err = coordinator
+            .apply_agent_file_edits(
+                &mut p,
+                &plan,
+                run_input(AgentRunStatus::NotesOnly),
+                vec![AgentFileEdit {
+                    file: "src/app.ts".to_string(),
+                    expected_text: "outside worktree\n".to_string(),
+                    new_text: "should not write\n".to_string(),
+                    summary: "Attempt a write outside the project worktree scope.".to_string(),
+                }],
+            )
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::InvalidWorktreePath { .. }));
+        assert_eq!(
+            std::fs::read_to_string(&outside_target).unwrap(),
+            "outside worktree\n"
+        );
+        assert!(p.card("logic-a").unwrap().agent_runs.is_empty());
+
+        let _ = std::fs::remove_dir_all(root);
+        let _ = std::fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn record_agent_run_rejects_mismatched_plan_metadata() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let mut plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        plan.branch = "open-code/card/other".to_string();
+
+        let err = coordinator
+            .record_agent_run(&mut p, &plan, run_input(AgentRunStatus::NotesOnly))
+            .unwrap_err();
+
+        assert!(matches!(err, LogicError::AgentPlanMismatch { .. }));
+    }
+
+    #[test]
+    fn record_agent_run_rejects_out_of_scope_proposed_changes() {
+        let mut p = project(
+            vec![card(
+                "logic-a",
+                "Logic A",
+                CardStatus::Ready,
+                &["src/app.ts"],
+            )],
+            vec![],
+        );
+        let coordinator = AgentCoordinator::new("/repo");
+        let plan = coordinator.plan_card_work(&p, "logic-a").unwrap();
+        coordinator.record_start(&mut p, &plan).unwrap();
+        let mut input = run_input(AgentRunStatus::ReadyForReview);
+        input.proposed_changes = vec![ProposedFileChange {
+            file: "src/other.ts".to_string(),
+            summary: "Out-of-scope edit.".to_string(),
+            status: "proposed".to_string(),
+            hunks: Vec::new(),
+        }];
+
+        let err = coordinator.record_agent_run(&mut p, &plan, input).unwrap_err();
+        assert!(matches!(err, LogicError::ProposedChangeOutOfScope { .. }));
     }
 
     #[test]

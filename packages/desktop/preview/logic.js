@@ -509,15 +509,101 @@ export function markCardMerged(project, cardId) {
     throw new Error(`Card ${cardId} is not ready to merge`);
   }
   card.status = "merged";
+  card.implementationBranch = null;
+  card.worktreePath = null;
   card.conflicts = [];
   const latestRun = card.agentRuns?.[card.agentRuns.length - 1];
   if (latestRun) {
     latestRun.proposedChanges = latestRun.proposedChanges.map((change) => ({
       ...change,
-      status: change.status === "needs_merge_agent" ? "needs_merge_agent" : "applied"
+      status: change.status === "needs_merge_agent" ? "needs_merge_agent" : "applied",
+      hunks: (change.hunks || []).map((hunk) => ({
+        ...hunk,
+        status: change.status === "needs_merge_agent" ? "needs_merge_agent" : "applied"
+      }))
     }));
   }
   return next;
+}
+
+export function cancelAgentRun(project, cardId, options = {}) {
+  const next = cloneProject(project);
+  const card = next.cards.find((candidate) => candidate.id === cardId);
+  if (!card) throw new Error(`Missing card ${cardId}`);
+  if (card.status !== "running") {
+    throw new Error(`Card ${cardId} is not running`);
+  }
+  const at = options.at || new Date().toISOString();
+  const run = {
+    id: options.id || `run-${card.id}-${Date.now()}`,
+    at,
+    model: "system",
+    mode: "manual_cancel",
+    status: "cancelled",
+    promptSummary: "",
+    note:
+      options.note ||
+      "Reviewer cancelled the running agent before reviewable edits were produced.",
+    startedAt: null,
+    finishedAt: at,
+    branch: card.implementationBranch || null,
+    worktreePath: card.worktreePath || null,
+    diagnostics: [
+      {
+        level: "warn",
+        message:
+          "Agent run cancelled; branch and worktree metadata were preserved for inspection."
+      }
+    ],
+    proposedChanges: [],
+    preflightConflicts: card.conflicts || []
+  };
+
+  card.agentRuns = [...(card.agentRuns || []), run];
+  card.status = "blocked";
+  return { project: next, run };
+}
+
+export function resetAgentWork(project, cardId, options = {}) {
+  const next = cloneProject(project);
+  const card = next.cards.find((candidate) => candidate.id === cardId);
+  if (!card) throw new Error(`Missing card ${cardId}`);
+  if (card.status !== "blocked") {
+    throw new Error(`Card ${cardId} cannot be reset from ${card.status}`);
+  }
+  const latestRun = latestAgentRun(card);
+  if (!["cancelled", "failed", "rejected"].includes(latestRun?.status)) {
+    throw new Error(`Card ${cardId} has no terminal agent run to reset`);
+  }
+  const at = options.at || new Date().toISOString();
+  const run = {
+    id: options.id || `run-${card.id}-${Date.now()}`,
+    at,
+    model: "system",
+    mode: "manual_reset",
+    status: "abandoned",
+    promptSummary: "",
+    note: options.note || "Reviewer reset this blocked agent work for a clean retry.",
+    startedAt: null,
+    finishedAt: at,
+    branch: card.implementationBranch || latestRun.branch || null,
+    worktreePath: card.worktreePath || latestRun.worktreePath || null,
+    diagnostics: [
+      {
+        level: "info",
+        message: "Previous branch/worktree metadata was preserved in this audit run."
+      }
+    ],
+    proposedChanges: [],
+    preflightConflicts: card.conflicts || []
+  };
+
+  card.agentRuns = [...(card.agentRuns || []), run];
+  card.status = "ready";
+  card.implementationBranch = null;
+  card.worktreePath = null;
+  card.conflicts = [];
+  return { project: next, run };
 }
 
 export function resolveHumanConflict(project, conflictId, action = "resolve-link") {
@@ -820,7 +906,8 @@ function proposedChangesForCard(card, preflightConflicts) {
       {
         file: "(new file TBD)",
         summary: "Worker should choose a file after reading the project structure.",
-        status: "proposed"
+        status: "proposed",
+        hunks: []
       }
     ];
   }
@@ -829,8 +916,27 @@ function proposedChangesForCard(card, preflightConflicts) {
     summary: conflictFiles.has(file)
       ? "Review with merge agent because another active card links this file."
       : `Implement ${card.title} while preserving the card summary and dependencies.`,
-    status: conflictFiles.has(file) ? "needs_merge_agent" : "proposed"
+    status: conflictFiles.has(file) ? "needs_merge_agent" : "proposed",
+    hunks: [
+      previewReviewHunk(
+        file,
+        conflictFiles.has(file) ? "needs_merge_agent" : "proposed",
+        "Preview simulates one review hunk for this linked file."
+      )
+    ]
   }));
+}
+
+function previewReviewHunk(file, status, summary) {
+  return {
+    id: `${slugify(file)}-hunk-1`,
+    oldStartLine: 1,
+    oldLineCount: 0,
+    newStartLine: 1,
+    newLineCount: 1,
+    status,
+    summary
+  };
 }
 
 function dependencyCycles(project) {

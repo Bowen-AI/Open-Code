@@ -41,6 +41,8 @@ const requiredActions = [
   "select-card",
   "run-agent",
   "merge-card",
+  "cancel-agent",
+  "reset-agent",
   "open-card",
   "resolve-conflict",
   "obsolete-conflict"
@@ -62,7 +64,7 @@ for (const selector of [
   assert.ok(css.includes(selector), `missing CSS selector ${selector}`);
 }
 
-for (const selector of [".agent-run", ".proposed-change", ".proposed-changes"]) {
+for (const selector of [".agent-run", ".proposed-change", ".proposed-changes", ".review-hunk"]) {
   assert.ok(css.includes(selector), `missing agent worker CSS selector ${selector}`);
 }
 

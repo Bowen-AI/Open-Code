@@ -418,6 +418,39 @@ h1 {
   color: #245a76;
 }
 
+.review-hunks {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.review-hunk {
+  border-left: 3px solid #b7c8bf;
+  background: #f7fbf9;
+  padding: 7px 8px;
+}
+
+.review-hunk span {
+  display: inline-block;
+}
+
+.review-hunk code {
+  display: inline-block;
+  margin-left: 6px;
+}
+
+.review-hunk p {
+  color: #40514a;
+  font-size: 12px;
+  margin: 4px 0 0;
+}
+
+.review-hunk small {
+  display: block;
+  margin-top: 3px;
+  color: #596661;
+}
+
 .mini-conflict.human {
   border-color: #c98671;
 }

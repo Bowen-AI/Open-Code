@@ -393,7 +393,7 @@ h1 {
 
 .card-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 8px;
   border-top: 1px solid #e0ded5;
   padding: 10px;
@@ -409,7 +409,8 @@ h1 {
 }
 
 .branch-box,
-.selected-conflicts {
+.selected-conflicts,
+.latest-run {
   border-top: 1px solid #d7d4ca;
   margin-top: 14px;
   padding-top: 14px;
@@ -437,11 +438,14 @@ h1 {
   padding: 8px;
 }
 
-.selected-conflicts h3 {
+.selected-conflicts h3,
+.latest-run h3 {
   font-size: 15px;
 }
 
-.mini-conflict {
+.mini-conflict,
+.proposed-change,
+.run-diagnostic {
   margin-bottom: 8px;
 }
 
@@ -458,6 +462,84 @@ h1 {
 
 .mini-conflict p {
   margin-bottom: 0;
+}
+
+.latest-run {
+  display: grid;
+  gap: 8px;
+}
+
+.latest-run code,
+.proposed-change,
+.run-diagnostic {
+  display: block;
+  border: 1px solid #d7d4ca;
+  border-radius: 6px;
+  background: #fffdf8;
+  padding: 8px;
+}
+
+.run-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.review-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.run-meta span,
+.proposed-change span,
+.run-diagnostic span {
+  display: inline-block;
+  border-radius: 999px;
+  background: #eef1ed;
+  color: #40514a;
+  font-size: 12px;
+  padding: 3px 7px;
+}
+
+.proposed-change code {
+  margin-bottom: 6px;
+}
+
+.proposed-change p,
+.run-diagnostic p {
+  margin: 6px 0 0;
+}
+
+.review-hunks {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.review-hunk {
+  border-left: 3px solid #b7c8bf;
+  background: #f7fbf9;
+  padding: 7px 8px;
+}
+
+.review-hunk code {
+  display: inline-block;
+  border: 0;
+  background: transparent;
+  padding: 0;
+}
+
+.review-hunk p {
+  margin: 4px 0 0;
+  color: #40514a;
+  font-size: 12px;
+}
+
+.review-hunk small {
+  display: block;
+  margin-top: 3px;
+  color: #596661;
 }
 
 .bottom {

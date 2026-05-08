@@ -27,6 +27,18 @@ export type ConflictStatus =
   | "human_review"
   | "resolved";
 
+export type AgentRunStatus =
+  | "started"
+  | "notes_only"
+  | "ready_for_review"
+  | "applied"
+  | "rejected"
+  | "failed"
+  | "cancelled"
+  | "abandoned";
+
+export type AgentReviewDisposition = "merged" | "rejected";
+
 export interface LogicProject {
   version: number;
   project: ProjectMeta;
@@ -110,18 +122,71 @@ export interface StartAgentResponse {
   outcomes: GitCommandOutcome[];
 }
 
+export interface RecordAgentRunResponse {
+  project: LogicProject;
+  run: AgentRun;
+}
+
 export interface AgentRun {
   id: string;
   at: string;
   model: string;
   mode: string;
+  status?: AgentRunStatus;
+  promptSummary?: string;
   note: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  branch?: string | null;
+  worktreePath?: string | null;
+  diagnostics?: AgentDiagnostic[];
   proposedChanges: ProposedFileChange[];
   preflightConflicts: ConflictRecord[];
+}
+
+export interface AgentRunInput {
+  id?: string | null;
+  model: string;
+  mode: string;
+  status: AgentRunStatus;
+  promptSummary?: string;
+  note: string;
+  startedAt?: string | null;
+  finishedAt?: string | null;
+  diagnostics?: AgentDiagnostic[];
+  proposedChanges?: ProposedFileChange[];
+}
+
+export interface AgentFileEdit {
+  file: string;
+  expectedText: string;
+  newText: string;
+  summary?: string;
+}
+
+export interface AgentLinkedFile {
+  file: string;
+  text: string;
+}
+
+export interface AgentDiagnostic {
+  level: string;
+  message: string;
 }
 
 export interface ProposedFileChange {
   file: string;
   summary: string;
   status: string;
+  hunks?: ProposedChangeHunk[];
+}
+
+export interface ProposedChangeHunk {
+  id: string;
+  oldStartLine: number;
+  oldLineCount: number;
+  newStartLine: number;
+  newLineCount: number;
+  status: string;
+  summary: string;
 }

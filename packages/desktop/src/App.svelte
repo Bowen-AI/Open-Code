@@ -7,18 +7,26 @@
     MODEL_CHOICES,
     OLLAMA_BASE_URL,
     askOllama,
+    buildCardAgentEditMessages,
     buildCardAgentMessages,
     checkOllama,
     installHint,
-    modelFromChoice
+    modelFromChoice,
+    parseStructuredAgentEditResponse
   } from "./lib/models";
   import type {
+    AgentFileEdit,
+    AgentLinkedFile,
+    AgentReviewDisposition,
     AgentWorkPlan,
     ConflictRecord,
     ConflictStatus,
     GitCommandPlan,
     LogicCard,
     LogicProject,
+    AgentRun,
+    AgentRunInput,
+    RecordAgentRunResponse,
     StartAgentResponse
   } from "./lib/types";
 
@@ -46,6 +54,15 @@
   let agentConflicts: ConflictRecord[] = [];
   let selectedConflicts: ConflictRecord[] = [];
   let visibleCards: LogicCard[] = [];
+  let selectedRun: AgentRun | undefined;
+
+  interface ActiveAgentRequest {
+    token: string;
+    controller: AbortController;
+    startedAt: string;
+  }
+
+  let activeAgentRequests = new Map<string, ActiveAgentRequest>();
 
   $: selectedTopic = project.topics.find((topic) => topic.id === selectedTopicId);
   $: selectedCard = project.cards.find((card) => card.id === selectedCardId);
@@ -55,6 +72,7 @@
   $: selectedConflicts = selectedCard
     ? conflicts.filter((conflict) => conflict.cardIds.includes(selectedCard.id))
     : [];
+  $: selectedRun = selectedCard ? latestAgentRun(selectedCard) : undefined;
   $: visibleCards = selectedTopic
     ? selectedTopic.cardIds
         .map((cardId) => project.cards.find((card) => card.id === cardId))
@@ -139,12 +157,61 @@
       });
       project = response.project;
       selectedCardId = response.plan.cardId;
-      const modelNote = await askBrainForCard(card, response.plan.preflightConflicts);
-      agentLog = [`Brain ${selectedModel}: ${modelNote}`].concat(formatStartResponse(response), agentLog);
-      statusLine = response.outcomes.every((outcome) => outcome.ok)
-        ? "Agent worktree started."
-        : "Git command failed; review agent activity before continuing.";
-      await refreshPaper();
+      const startLines = formatStartResponse(response);
+      if (!response.outcomes.every((outcome) => outcome.ok)) {
+        agentLog = [...startLines, ...agentLog];
+        statusLine = "Git command failed; review agent activity before continuing.";
+        await refreshPaper();
+        return;
+      }
+      const startedAt = new Date().toISOString();
+      const activeRequest = beginAgentRequest(response.plan.cardId, startedAt);
+      try {
+        const run = await runStructuredWorker(
+          card,
+          response.plan,
+          startedAt,
+          activeRequest.controller.signal
+        );
+        if (!isActiveAgentRequest(response.plan.cardId, activeRequest.token)) {
+          agentLog = [
+            `Ignored late worker result for ${response.plan.cardId}; cancellation is authoritative.`,
+            ...startLines,
+            ...agentLog
+          ];
+          statusLine = `${card.title} cancellation was already recorded; late model output was ignored.`;
+          await refreshPaper();
+          return;
+        }
+        project = run.project;
+        agentLog = [
+          `Worker run ${run.run.id}: ${run.run.status ?? "notes_only"}`,
+          `Recorded ${run.run.proposedChanges.length} scoped proposed change(s)`,
+          ...startLines,
+          ...agentLog
+        ];
+        statusLine =
+          run.run.status === "ready_for_review"
+            ? "Agent applied structured edits in the card worktree; review before merging."
+            : run.run.status === "failed"
+              ? "Agent worker failed while applying structured edits; inspect the latest run diagnostics."
+              : "Agent worktree started; no reviewable file edits were applied.";
+        await refreshPaper();
+      } catch (error) {
+        if (isAbortError(error) || activeRequest.controller.signal.aborted) {
+          agentLog = [
+            `Stopped in-flight worker for ${response.plan.cardId}; late model output cannot update the card.`,
+            ...startLines,
+            ...agentLog
+          ];
+          statusLine = `${card.title} cancellation requested; in-flight model work stopped.`;
+          await refreshPaper();
+          return;
+        }
+        throw error;
+      } finally {
+        clearActiveAgentRequest(response.plan.cardId, activeRequest.token);
+      }
     } catch (error) {
       statusLine = `Agent could not start: ${String(error)}`;
     }
@@ -181,6 +248,356 @@
       modelOnline = false;
       return `Brain call failed: ${(error as Error).message}`;
     }
+  }
+
+  async function runStructuredWorker(
+    card: LogicCard,
+    plan: AgentWorkPlan,
+    startedAt: string,
+    signal: AbortSignal
+  ): Promise<RecordAgentRunResponse> {
+    if (!modelOnline) {
+      const finishedAt = new Date().toISOString();
+      return recordAgentRun(
+        plan,
+        buildAgentRunInput(
+          card,
+          plan,
+          "Brain not connected; structured edits were not attempted.",
+          startedAt,
+          finishedAt,
+          "notes_only",
+          [
+            {
+              level: "warn",
+              message: `Offline brain: ${installHint(selectedModel)}`
+            }
+          ],
+          "simulated_note"
+        )
+      );
+    }
+
+    throwIfAgentCancelled(signal);
+
+    let files: AgentLinkedFile[];
+    try {
+      files = await invoke<AgentLinkedFile[]>("read_card_agent_files", {
+        projectRoot: projectRoot.trim(),
+        project,
+        plan
+      });
+    } catch (error) {
+      const finishedAt = new Date().toISOString();
+      return recordAgentRun(
+        plan,
+        buildAgentRunInput(
+          card,
+          plan,
+          `Could not read linked files from the card worktree: ${String(error)}`,
+          startedAt,
+          finishedAt,
+          "notes_only",
+          [{ level: "error", message: String(error) }],
+          "model_note"
+        )
+      );
+    }
+
+    throwIfAgentCancelled(signal);
+
+    let rawResponse = "";
+    try {
+      rawResponse = await askOllama(
+        modelBaseUrl,
+        selectedModel,
+        buildCardAgentEditMessages(card, plan.preflightConflicts, files),
+        { signal }
+      );
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        throw error;
+      }
+      modelOnline = false;
+      const finishedAt = new Date().toISOString();
+      return recordAgentRun(
+        plan,
+        buildAgentRunInput(
+          card,
+          plan,
+          `Brain call failed before structured edits were generated: ${(error as Error).message}`,
+          startedAt,
+          finishedAt,
+          "notes_only",
+          [{ level: "error", message: (error as Error).message }],
+          "model_note"
+        )
+      );
+    }
+
+    throwIfAgentCancelled(signal);
+
+    let parsed: { note: string; edits: AgentFileEdit[] };
+    try {
+      parsed = parseStructuredAgentEditResponse(
+        rawResponse,
+        files.map((file) => file.file)
+      );
+    } catch (error) {
+      const finishedAt = new Date().toISOString();
+      return recordAgentRun(
+        plan,
+        buildAgentRunInput(
+          card,
+          plan,
+          `Structured worker response could not be used: ${(error as Error).message}`,
+          startedAt,
+          finishedAt,
+          "notes_only",
+          [{ level: "error", message: (error as Error).message }],
+          "model_note"
+        )
+      );
+    }
+
+    const finishedAt = new Date().toISOString();
+    if (parsed.edits.length === 0) {
+      return recordAgentRun(
+        plan,
+        buildAgentRunInput(card, plan, parsed.note, startedAt, finishedAt, "notes_only", [
+          { level: "info", message: "Structured worker returned no file edits." }
+        ])
+      );
+    }
+
+    throwIfAgentCancelled(signal);
+
+    const run = buildAgentRunInput(card, plan, parsed.note, startedAt, finishedAt, "started", [
+      {
+        level: "info",
+        message: `Structured worker generated ${parsed.edits.length} file edit(s).`
+      }
+    ], "model");
+    try {
+      throwIfAgentCancelled(signal);
+      const response = await invoke<RecordAgentRunResponse>("apply_card_agent_edits", {
+        projectRoot: projectRoot.trim(),
+        project,
+        plan,
+        run,
+        edits: parsed.edits
+      });
+      throwIfAgentCancelled(signal);
+      return response;
+    } catch (error) {
+      if (isAbortError(error) || signal.aborted) {
+        throw error;
+      }
+      return recordAgentRun(
+        plan,
+        buildAgentRunInput(
+          card,
+          plan,
+          `Structured edit application failed: ${String(error)}`,
+          startedAt,
+          new Date().toISOString(),
+          "failed",
+          [{ level: "error", message: String(error) }]
+        )
+      );
+    }
+  }
+
+  async function recordAgentRun(plan: AgentWorkPlan, run: AgentRunInput) {
+    return invoke<RecordAgentRunResponse>("record_card_agent_run", {
+      projectRoot: projectRoot.trim(),
+      project,
+      plan,
+      run
+    });
+  }
+
+  async function finalizeAgentReview(card: LogicCard, disposition: AgentReviewDisposition) {
+    if (!projectRoot.trim()) {
+      statusLine = "Set a project root before closing out an agent review.";
+      return;
+    }
+    try {
+      const response = await invoke<RecordAgentRunResponse>("finalize_card_agent_review", {
+        projectRoot: projectRoot.trim(),
+        project,
+        cardId: card.id,
+        disposition,
+        reviewedAt: new Date().toISOString()
+      });
+      project = response.project;
+      selectedCardId = card.id;
+      const action = disposition === "merged" ? "merged" : "rejected";
+      agentLog = [
+        `Review ${action}: ${card.id} (${response.run.proposedChanges.length} change(s))`,
+        ...agentLog
+      ];
+      statusLine =
+        disposition === "merged"
+          ? `${card.title} branch merged; generated paper updated.`
+          : `${card.title} rejected; worktree remains for inspection.`;
+      await refreshPaper();
+    } catch (error) {
+      statusLine = `Could not close agent review: ${String(error)}`;
+    }
+  }
+
+  async function cancelAgent(card: LogicCard) {
+    const stoppedActiveRequest = abortActiveAgentRequest(card.id);
+    if (!projectRoot.trim()) {
+      const cancelledAt = new Date().toISOString();
+      const run: AgentRun = {
+        id: `run-${card.id}-${Date.now()}`,
+        at: cancelledAt,
+        model: "system",
+        mode: "manual_cancel",
+        status: "cancelled",
+        promptSummary: "",
+        note: "Simulated running card agent was cancelled before reviewable edits were produced.",
+        startedAt: null,
+        finishedAt: cancelledAt,
+        branch: card.implementationBranch ?? null,
+        worktreePath: card.worktreePath ?? null,
+        diagnostics: [
+          {
+            level: "warn",
+            message: "Simulated cancellation preserved branch/worktree metadata in project state."
+          }
+        ],
+        proposedChanges: [],
+        preflightConflicts: card.conflicts ?? []
+      };
+      updateCard(card.id, {
+        status: "blocked",
+        agentRuns: [...(card.agentRuns ?? []), run]
+      });
+      agentLog = [
+        `Cancelled simulated run for ${card.id}; no project-root worktree was created.`,
+        ...(stoppedActiveRequest ? [`Stopped in-flight model request for ${card.id}.`] : []),
+        ...agentLog
+      ];
+      statusLine = "Simulated agent run cancelled.";
+      return;
+    }
+    try {
+      const response = await invoke<RecordAgentRunResponse>("cancel_card_agent", {
+        projectRoot: projectRoot.trim(),
+        project,
+        cardId: card.id,
+        cancelledAt: new Date().toISOString(),
+        reason: "User cancelled the running card agent before reviewable edits were produced."
+      });
+      project = response.project;
+      selectedCardId = card.id;
+      agentLog = [
+        `Cancelled ${card.id}; branch/worktree metadata preserved for inspection.`,
+        ...(stoppedActiveRequest ? [`Stopped in-flight model request for ${card.id}.`] : []),
+        ...agentLog
+      ];
+      statusLine = `${card.title} cancelled; inspect or reset the card before rerunning.`;
+      await refreshPaper();
+    } catch (error) {
+      statusLine = `Could not cancel agent: ${String(error)}`;
+    }
+  }
+
+  async function resetAgentWork(card: LogicCard) {
+    if (!isResettable(card)) {
+      statusLine = "Only blocked cards with a rejected, failed, or cancelled worker run can be reset.";
+      return;
+    }
+    const resetAt = new Date().toISOString();
+    if (!projectRoot.trim()) {
+      const run: AgentRun = {
+        id: `run-${card.id}-${Date.now()}`,
+        at: resetAt,
+        model: "system",
+        mode: "manual_reset",
+        status: "abandoned",
+        promptSummary: "",
+        note: "Simulated blocked agent work was reset for a clean retry.",
+        startedAt: null,
+        finishedAt: resetAt,
+        branch: card.implementationBranch ?? latestAgentRun(card)?.branch ?? null,
+        worktreePath: card.worktreePath ?? latestAgentRun(card)?.worktreePath ?? null,
+        diagnostics: [
+          {
+            level: "info",
+            message: "Previous branch/worktree metadata was preserved in this audit run."
+          }
+        ],
+        proposedChanges: [],
+        preflightConflicts: card.conflicts ?? []
+      };
+      updateCard(card.id, {
+        status: "ready",
+        implementationBranch: null,
+        worktreePath: null,
+        conflicts: [],
+        agentRuns: [...(card.agentRuns ?? []), run]
+      });
+      agentLog = [`Reset ${card.id} for retry in preview state.`, ...agentLog];
+      statusLine = `${card.title} reset for retry.`;
+      return;
+    }
+    try {
+      const response = await invoke<RecordAgentRunResponse>("reset_card_agent_work", {
+        projectRoot: projectRoot.trim(),
+        project,
+        cardId: card.id,
+        resetAt,
+        reason: "User reset blocked agent work for a clean retry."
+      });
+      project = response.project;
+      selectedCardId = card.id;
+      agentLog = [
+        `Reset ${card.id} for retry; previous branch/worktree recorded in ${response.run.id}.`,
+        ...agentLog
+      ];
+      statusLine = `${card.title} reset for retry.`;
+      await refreshPaper();
+    } catch (error) {
+      statusLine = `Could not reset agent work: ${String(error)}`;
+    }
+  }
+
+  function buildAgentRunInput(
+    card: LogicCard,
+    plan: AgentWorkPlan,
+    note: string,
+    startedAt: string,
+    finishedAt: string,
+    status: AgentRunInput["status"] = "notes_only",
+    diagnostics: NonNullable<AgentRunInput["diagnostics"]> = [
+      {
+        level: "info",
+        message: "Production path recorded an implementation note without file edits."
+      }
+    ],
+    mode = modelOnline ? "model_note" : "simulated_note"
+  ): AgentRunInput {
+    const promptSummary = [
+      `Card ${card.id}: ${card.summary}`,
+      `Files: ${plan.linkedFiles.join(", ") || "none"}`,
+      `Dependencies: ${card.dependencies.join(", ") || "none"}`,
+      `Preflight conflicts: ${plan.preflightConflicts.length}`
+    ].join(" | ");
+    return {
+      id: `run-${card.id}-${Date.now()}`,
+      model: selectedModel,
+      mode,
+      status,
+      promptSummary,
+      note,
+      startedAt,
+      finishedAt,
+      diagnostics
+    };
   }
 
   async function openInVsCode(card?: LogicCard) {
@@ -278,6 +695,72 @@
 
   function formatCommand(command: GitCommandPlan) {
     return `${command.program} ${command.args.join(" ")}`;
+  }
+
+  function latestAgentRun(card: LogicCard) {
+    return card.agentRuns?.[card.agentRuns.length - 1];
+  }
+
+  function beginAgentRequest(cardId: string, startedAt: string): ActiveAgentRequest {
+    const existing = activeAgentRequests.get(cardId);
+    existing?.controller.abort();
+    const request = {
+      token: `${cardId}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      controller: new AbortController(),
+      startedAt
+    };
+    activeAgentRequests = new Map(activeAgentRequests);
+    activeAgentRequests.set(cardId, request);
+    return request;
+  }
+
+  function abortActiveAgentRequest(cardId: string) {
+    const request = activeAgentRequests.get(cardId);
+    if (!request) {
+      return false;
+    }
+    request.controller.abort();
+    activeAgentRequests = new Map(activeAgentRequests);
+    activeAgentRequests.delete(cardId);
+    return true;
+  }
+
+  function clearActiveAgentRequest(cardId: string, token: string) {
+    if (activeAgentRequests.get(cardId)?.token !== token) {
+      return;
+    }
+    activeAgentRequests = new Map(activeAgentRequests);
+    activeAgentRequests.delete(cardId);
+  }
+
+  function isActiveAgentRequest(cardId: string, token: string) {
+    return activeAgentRequests.get(cardId)?.token === token;
+  }
+
+  function throwIfAgentCancelled(signal: AbortSignal) {
+    if (!signal.aborted) {
+      return;
+    }
+    const error = new Error("Agent worker was cancelled.");
+    error.name = "AbortError";
+    throw error;
+  }
+
+  function isAbortError(error: unknown) {
+    return Boolean(error && typeof error === "object" && "name" in error && error.name === "AbortError");
+  }
+
+  function isReviewable(card: LogicCard) {
+    const run = latestAgentRun(card);
+    return card.status === "ready_to_merge" && (run?.status ?? "ready_for_review") === "ready_for_review";
+  }
+
+  function isResettable(card: LogicCard) {
+    const run = latestAgentRun(card);
+    return (
+      card.status === "blocked" &&
+      (run?.status === "cancelled" || run?.status === "failed" || run?.status === "rejected")
+    );
   }
 
   function detectLocalConflicts(value: LogicProject): ConflictRecord[] {
@@ -547,6 +1030,16 @@
             </button>
             <div class="card-actions">
               <button type="button" on:click={() => startAgent(card)}>Run agent</button>
+              {#if isReviewable(card)}
+                <button type="button" on:click={() => finalizeAgentReview(card, "merged")}>Merge branch</button>
+                <button type="button" on:click={() => finalizeAgentReview(card, "rejected")}>Reject run</button>
+              {/if}
+              {#if card.status === "running"}
+                <button type="button" on:click={() => cancelAgent(card)}>Cancel run</button>
+              {/if}
+              {#if isResettable(card)}
+                <button type="button" on:click={() => resetAgentWork(card)}>Reset for retry</button>
+              {/if}
               <button type="button" on:click={() => openInVsCode(card)}>VS Code</button>
             </div>
           </article>
@@ -628,6 +1121,12 @@
               <span>Worktree</span>
               <code>{selectedCard.worktreePath}</code>
             {/if}
+            {#if selectedCard.status === "running"}
+              <button type="button" on:click={() => cancelAgent(selectedCard)}>Cancel run</button>
+            {/if}
+            {#if isResettable(selectedCard)}
+              <button type="button" on:click={() => resetAgentWork(selectedCard)}>Reset for retry</button>
+            {/if}
           </section>
         {/if}
 
@@ -645,6 +1144,67 @@
             {/each}
           {/if}
         </section>
+
+        {#if selectedRun}
+          <section class="latest-run">
+            <h3>Latest agent run</h3>
+            <div class="run-meta">
+              <span>{selectedRun.status ?? "ready_for_review"}</span>
+              <span>{selectedRun.mode}</span>
+            </div>
+            <p>{selectedRun.note}</p>
+            {#if selectedRun.promptSummary}
+              <code>{selectedRun.promptSummary}</code>
+            {/if}
+            {#if selectedRun.branch}
+              <code>{selectedRun.branch}</code>
+            {/if}
+            {#if isReviewable(selectedCard)}
+              <div class="review-actions" aria-label="Agent review actions">
+                <button type="button" on:click={() => finalizeAgentReview(selectedCard, "merged")}>
+                  Merge branch
+                </button>
+                <button type="button" on:click={() => finalizeAgentReview(selectedCard, "rejected")}>
+                  Reject run
+                </button>
+              </div>
+            {/if}
+            {#if isResettable(selectedCard)}
+              <div class="review-actions" aria-label="Agent retry actions">
+                <button type="button" on:click={() => resetAgentWork(selectedCard)}>
+                  Reset for retry
+                </button>
+              </div>
+            {/if}
+            {#each selectedRun.diagnostics ?? [] as diagnostic}
+              <div class="run-diagnostic">
+                <span>{diagnostic.level}</span>
+                <p>{diagnostic.message}</p>
+              </div>
+            {/each}
+            {#each selectedRun.proposedChanges ?? [] as change}
+              <div class="proposed-change">
+                <code>{change.file}</code>
+                <span>{change.status}</span>
+                <p>{change.summary}</p>
+                {#if (change.hunks ?? []).length > 0}
+                  <div class="review-hunks" aria-label={`Review hunks for ${change.file}`}>
+                    {#each change.hunks ?? [] as hunk}
+                      <div class="review-hunk">
+                        <span>{hunk.status}</span>
+                        <code>{hunk.id}</code>
+                        <p>
+                          old {hunk.oldStartLine}:{hunk.oldLineCount} · new {hunk.newStartLine}:{hunk.newLineCount}
+                        </p>
+                        <small>{hunk.summary}</small>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
+            {/each}
+          </section>
+        {/if}
       {:else}
         <p>Select a card to edit its logic.</p>
       {/if}

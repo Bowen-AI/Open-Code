@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/open-code-memory", "crates/open-code-logic"]
+exclude = ["packages/desktop/src-tauri"]
 
 [workspace.package]
 edition = "2021"

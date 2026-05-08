@@ -111,7 +111,7 @@ export async function checkOllama(baseUrl = OLLAMA_BASE_URL, choice = DEFAULT_MO
   };
 }
 
-export async function askOllama(baseUrl, model, messages) {
+export async function askOllama(baseUrl, model, messages, options = {}) {
   const cleanBaseUrl = normalizeOllamaBaseUrl(baseUrl);
   const response = await fetchWithTimeout(`${cleanBaseUrl}/api/chat`, {
     method: "POST",
@@ -123,7 +123,7 @@ export async function askOllama(baseUrl, model, messages) {
       messages,
       stream: false
     })
-  }, 120000);
+  }, options.timeoutMs || 120000, options.signal);
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Ollama chat failed: HTTP ${response.status} ${text}`);
@@ -166,12 +166,19 @@ function expandInstalledModelName(name) {
   return tag === "latest" ? [name, family] : [name];
 }
 
-async function fetchWithTimeout(url, options, timeoutMs) {
+async function fetchWithTimeout(url, options, timeoutMs, externalSignal) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) {
+    controller.abort(externalSignal.reason);
+  } else {
+    externalSignal?.addEventListener("abort", abortFromExternal, { once: true });
+  }
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } finally {
     clearTimeout(timeout);
+    externalSignal?.removeEventListener("abort", abortFromExternal);
   }
 }

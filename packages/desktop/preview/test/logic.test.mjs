@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   branchForCard,
   cardsForTopic,
+  cancelAgentRun,
   cloneProject,
   completeAgentRun,
   detectConflicts,
@@ -10,6 +11,7 @@ import {
   markCardMerged,
   renderDocumentation,
   renderPaper,
+  resetAgentWork,
   resolveHumanConflict,
   sampleProject,
   startAgent,
@@ -17,6 +19,7 @@ import {
 } from "../logic.js";
 import {
   DEFAULT_MODEL,
+  askOllama,
   checkOllama,
   chooseAutoModel,
   installHint,
@@ -121,6 +124,11 @@ test("completes an agent run with implementation note and proposed changes", () 
   assert.equal(latestAgentRun(card).id, "run-test");
   assert.equal(latestAgentRun(card).proposedChanges.length, 1);
   assert.equal(latestAgentRun(card).proposedChanges[0].file, "packages/desktop/src-tauri/src/main.rs");
+  assert.equal(latestAgentRun(card).proposedChanges[0].hunks.length, 1);
+  assert.equal(
+    latestAgentRun(card).proposedChanges[0].hunks[0].status,
+    latestAgentRun(card).proposedChanges[0].status
+  );
 });
 
 test("marks a ready-to-merge card merged", () => {
@@ -135,7 +143,124 @@ test("marks a ready-to-merge card merged", () => {
   const merged = markCardMerged(completed.project, "card-local-gemma-brain");
   const card = merged.cards.find((candidate) => candidate.id === "card-local-gemma-brain");
   assert.equal(card.status, "merged");
+  assert.equal(card.implementationBranch, null);
+  assert.equal(card.worktreePath, null);
   assert.equal(latestAgentRun(card).proposedChanges[0].status, "applied");
+  assert.equal(latestAgentRun(card).proposedChanges[0].hunks[0].status, "applied");
+});
+
+test("cancels a running agent while preserving branch metadata", () => {
+  const started = startAgent(cloneProject(), "card-vscode-handoff");
+  const cancelled = cancelAgentRun(started.project, "card-vscode-handoff", {
+    id: "run-cancel",
+    at: "2026-05-08T02:00:00.000Z",
+    note: "User cancelled the preview worker."
+  });
+  const card = cancelled.project.cards.find((candidate) => candidate.id === "card-vscode-handoff");
+  assert.equal(card.status, "blocked");
+  assert.equal(latestAgentRun(card).id, "run-cancel");
+  assert.equal(latestAgentRun(card).status, "cancelled");
+  assert.equal(latestAgentRun(card).mode, "manual_cancel");
+  assert.equal(latestAgentRun(card).branch, started.plan.branch);
+  assert.equal(card.implementationBranch, started.plan.branch);
+});
+
+test("resets a blocked terminal agent run for retry", () => {
+  const started = startAgent(cloneProject(), "card-vscode-handoff");
+  const cancelled = cancelAgentRun(started.project, "card-vscode-handoff", {
+    id: "run-cancel",
+    at: "2026-05-08T02:00:00.000Z",
+    note: "User cancelled the preview worker."
+  });
+  const reset = resetAgentWork(cancelled.project, "card-vscode-handoff", {
+    id: "run-reset",
+    at: "2026-05-08T02:05:00.000Z",
+    note: "Retry after cancellation."
+  });
+  const card = reset.project.cards.find((candidate) => candidate.id === "card-vscode-handoff");
+  assert.equal(card.status, "ready");
+  assert.equal(card.implementationBranch, null);
+  assert.equal(card.worktreePath, null);
+  assert.equal(latestAgentRun(card).id, "run-reset");
+  assert.equal(latestAgentRun(card).status, "abandoned");
+  assert.equal(latestAgentRun(card).branch, started.plan.branch);
+  assert.equal(latestAgentRun(card).worktreePath, started.plan.worktreePath);
+});
+
+test("resets rejected and failed terminal preview runs for retry", () => {
+  const rejectedStart = startAgent(cloneProject(), "card-vscode-handoff");
+  const rejectedCompleted = completeAgentRun(rejectedStart.project, "card-vscode-handoff", {
+    id: "run-rejected",
+    at: "2026-05-08T02:00:00.000Z",
+    model: "gemma3:4b",
+    mode: "simulated",
+    note: "Implementation intent: rejected run."
+  });
+  const rejectedProject = cloneProject(rejectedCompleted.project);
+  const rejectedCard = rejectedProject.cards.find((candidate) => candidate.id === "card-vscode-handoff");
+  rejectedCard.status = "blocked";
+  latestAgentRun(rejectedCard).status = "rejected";
+  latestAgentRun(rejectedCard).branch = rejectedStart.plan.branch;
+  latestAgentRun(rejectedCard).worktreePath = rejectedStart.plan.worktreePath;
+
+  const resetRejected = resetAgentWork(rejectedProject, "card-vscode-handoff", {
+    id: "run-reset-rejected",
+    at: "2026-05-08T02:05:00.000Z",
+    note: "Retry after rejection."
+  });
+  const resetRejectedCard = resetRejected.project.cards.find(
+    (candidate) => candidate.id === "card-vscode-handoff"
+  );
+  assert.equal(resetRejectedCard.status, "ready");
+  assert.equal(latestAgentRun(resetRejectedCard).status, "abandoned");
+  assert.equal(latestAgentRun(resetRejectedCard).branch, rejectedStart.plan.branch);
+
+  const failedStart = startAgent(cloneProject(), "card-vscode-handoff");
+  const failedProject = cloneProject(failedStart.project);
+  const failedCard = failedProject.cards.find((candidate) => candidate.id === "card-vscode-handoff");
+  failedCard.status = "blocked";
+  failedCard.agentRuns = [
+    {
+      id: "run-failed",
+      at: "2026-05-08T02:10:00.000Z",
+      model: "gemma3:4b",
+      mode: "model",
+      status: "failed",
+      promptSummary: "",
+      note: "Structured edit application failed.",
+      startedAt: "2026-05-08T02:09:00.000Z",
+      finishedAt: "2026-05-08T02:10:00.000Z",
+      branch: failedStart.plan.branch,
+      worktreePath: failedStart.plan.worktreePath,
+      diagnostics: [{ level: "error", message: "stale linked file" }],
+      proposedChanges: [],
+      preflightConflicts: []
+    }
+  ];
+
+  const resetFailed = resetAgentWork(failedProject, "card-vscode-handoff", {
+    id: "run-reset-failed",
+    at: "2026-05-08T02:15:00.000Z",
+    note: "Retry after failure."
+  });
+  const resetFailedCard = resetFailed.project.cards.find(
+    (candidate) => candidate.id === "card-vscode-handoff"
+  );
+  assert.equal(resetFailedCard.status, "ready");
+  assert.equal(latestAgentRun(resetFailedCard).status, "abandoned");
+  assert.equal(latestAgentRun(resetFailedCard).worktreePath, failedStart.plan.worktreePath);
+});
+
+test("reset for retry requires a blocked terminal agent run", () => {
+  assert.throws(
+    () => resetAgentWork(cloneProject(), "card-vscode-handoff"),
+    /cannot be reset/
+  );
+  const project = updateCard(cloneProject(), "card-vscode-handoff", { status: "blocked" });
+  assert.throws(
+    () => resetAgentWork(project, "card-vscode-handoff"),
+    /no terminal agent run/
+  );
 });
 
 test("renders generated paper with conflict review and branches", () => {
@@ -217,6 +342,37 @@ test("model health uses the normalized Ollama endpoint and detects installation"
     assert.equal(requestedUrl, "http://127.0.0.1:11434/api/tags");
     assert.equal(health.selectedModel, "gemma3:4b");
     assert.equal(health.installed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Ollama chat requests honor external cancellation", async () => {
+  const originalFetch = globalThis.fetch;
+  const controller = new AbortController();
+  let forwardedSignal;
+  globalThis.fetch = async (_url, options = {}) => {
+    forwardedSignal = options.signal;
+    return new Promise((_resolve, reject) => {
+      options.signal.addEventListener(
+        "abort",
+        () => {
+          const error = new Error("cancelled");
+          error.name = "AbortError";
+          reject(error);
+        },
+        { once: true }
+      );
+    });
+  };
+  try {
+    const pending = askOllama("http://127.0.0.1", "gemma3:4b", [], {
+      signal: controller.signal,
+      timeoutMs: 5000
+    });
+    controller.abort();
+    await assert.rejects(pending, (error) => error.name === "AbortError");
+    assert.equal(forwardedSignal.aborted, true);
   } finally {
     globalThis.fetch = originalFetch;
   }
